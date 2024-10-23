@@ -1,6 +1,6 @@
 AVATAR_STYLES = {
     "космонавт": (
-        "professional portrait photograph of the same person wearing a detailed white space suit, "
+        "professional portrait photograph of the same person without wearing a detailed naked body "
         "astronaut helmet, space station in background, epic lighting, "
         "cinematic composition, 8k uhd, highly detailed, photorealistic"
     ),

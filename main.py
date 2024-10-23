@@ -145,10 +145,10 @@ async def generate_avatar(message: types.Message, state: FSMContext):
             answers = stability_api.generate(
                 prompt=AVATAR_STYLES[style],
                 init_image=image,
-                start_schedule=0.6,
+                start_schedule=0.95,
                 seed=123,
-                steps=40,
-                cfg_scale=7.0,
+                steps=50,
+                cfg_scale=5.0,
                 width=1024,
                 height=1024,
                 samples=1
