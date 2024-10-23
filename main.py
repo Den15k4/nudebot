@@ -289,8 +289,10 @@ async def on_startup(dp: Dispatcher):
     try:
         # Проверка подключения к базе данных
         logger.info("Checking database connection...")
-        db.init_db()
-        logger.info("Database connection successful")
+        # Проверяем подключение простым запросом используя существующий метод
+        inspector = inspect(db.engine)
+        tables = inspector.get_table_names()
+        logger.info(f"Connected to database. Available tables: {tables}")
         
         # Проверка подключения к Replicate
         logger.info("Checking Replicate API connection...")
