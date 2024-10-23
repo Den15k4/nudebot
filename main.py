@@ -143,17 +143,17 @@ async def generate_avatar(message: types.Message, state: FSMContext):
         try:
             logger.info(f"Starting image generation for user {message.from_user.id} with style {style}")
             
-            # Обновленные параметры генерации для максимального сохранения внешности
+            # Обновленные параметры генерации
             answers = stability_api.generate(
                 prompt=AVATAR_STYLES[style],
                 init_image=image,
-                start_schedule=0.95,    # Максимальное сохранение исходного изображения
-                end_schedule=0.05,      # Минимальное влияние промпта
-                seed=42,                # Фиксированный сид для стабильности
-                steps=100,              # Увеличиваем количество шагов для лучшего качества
-                cfg_scale=4.0,          # Уменьшаем влияние промпта
+                image_strength=0.15,      # Очень низкая сила изменения изображения
+                start_schedule=0.99,      # Почти полное сохранение исходного изображения
+                cfg_scale=3.0,            # Минимальное влияние промпта
+                steps=150,                # Больше шагов для плавного изменения
                 width=1024,
                 height=1024,
+                sampler=generation.SAMPLER_K_DPMPP_2M, # Более стабильный сэмплер
                 samples=1
             )
             
