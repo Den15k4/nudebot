@@ -155,15 +155,48 @@ if __name__ == '__main__':
 async def on_startup(_):
     """Действия при запуске бота"""
     try:
-        logger.info("Initializing database...")
-        db.init_db()
-        logger.info("Database initialized successfully")
+        logger.info("Starting bot initialization...")
+        
+        # Инициализируем базу данных и проверяем создание таблиц
+        success = db.init_db()
+        if success:
+            logger.info("Database initialized successfully")
+        else:
+            logger.error("Failed to initialize database")
+            raise Exception("Database initialization failed")
+            
+        logger.info("Bot started successfully")
+        
     except Exception as e:
-        logger.error(f"Failed to initialize database: {e}")
+        logger.error(f"Failed to initialize bot: {e}")
         raise
 
-if __name__ == '__main__':
-    from aiogram import executor
+@dp.message_handler(commands=['start'])
+async def cmd_start(message: types.Message):
+    try:
+        # Регистрируем пользователя
+        db.register_user(message.from_user.id, message.from_user.username)
+        
+        # Проверяем подписку
+        has_sub, images_left = db.check_subscription(message.from_user.id)
+        
+        keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        keyboard.add(types.KeyboardButton("Создать аватар"))
+        
+        if has_sub:
+            await message.answer(
+                f"Привет! Я бот для создания стильных аватаров.\n"
+                f"У вас осталось изображений: {images_left}\n"
+                "Нажмите 'Создать аватар' чтобы начать!",
+                reply_markup=keyboard
+            )
+        else:
+            await message.answer(
+                "Произошла ошибка при проверке подписки.\n"
+                "Пожалуйста, попробуйте позже или обратитесь к администратору.",
+                reply_markup=keyboard
+            )
     
-    # Запускаем бота с обработчиком запуска
-    executor.start_polling(dp, skip_updates=True, on_startup=on_startup)
+    except Exception as e:
+        logger.error(f"Error in start command: {e}")
+        await message.answer("Произошла ошибка. Пожалуйста, попробуйте позже.")

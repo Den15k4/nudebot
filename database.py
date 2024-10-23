@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime, timedelta
-from sqlalchemy import create_engine, Column, Integer, String, DateTime
+from sqlalchemy import create_engine, Column, Integer, String, DateTime, inspect
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, scoped_session
 from sqlalchemy.sql import func
@@ -28,13 +28,15 @@ class Subscription(Base):
 class Database:
     def __init__(self, database_url):
         self.database_url = database_url
-        logger.info(f"Database URL: {database_url}")
+        logger.info(f"Initializing database with URL: {database_url}")
         
-        # Создаем engine для PostgreSQL
+        # Создаем engine для PostgreSQL с дополнительными параметрами
         self.engine = create_engine(
             self.database_url,
             pool_size=5,
             max_overflow=10,
+            pool_timeout=30,
+            pool_pre_ping=True,
             echo=True
         )
         
@@ -46,14 +48,27 @@ class Database:
         """Инициализация базы данных"""
         try:
             logger.info("Starting database initialization...")
-            Base.metadata.create_all(self.engine)
-            logger.info("Database tables created successfully")
             
-            # Проверяем создание таблиц
+            # Удаляем все таблицы (если есть) и создаем заново
+            Base.metadata.drop_all(self.engine)
+            logger.info("Dropped all existing tables")
+            
+            # Создаем все таблицы
+            Base.metadata.create_all(self.engine)
+            logger.info("Created all tables")
+            
+            # Проверяем созданные таблицы
             inspector = inspect(self.engine)
             tables = inspector.get_table_names()
             logger.info(f"Available tables: {tables}")
             
+            # Проверяем структуру таблиц
+            for table_name in tables:
+                columns = inspector.get_columns(table_name)
+                logger.info(f"Table {table_name} columns: {[column['name'] for column in columns]}")
+            
+            return True
+        
         except Exception as e:
             logger.error(f"Error initializing database: {e}")
             raise
@@ -63,6 +78,12 @@ class Database:
         try:
             session = self.Session()
             try:
+                # Проверяем существование таблицы
+                inspector = inspect(self.engine)
+                if 'subscriptions' not in inspector.get_table_names():
+                    logger.error("Subscriptions table does not exist!")
+                    self.init_db()  # Пересоздаем таблицы если их нет
+                
                 subscription = session.query(Subscription).filter_by(user_id=user_id).first()
                 
                 if not subscription:
@@ -77,9 +98,14 @@ class Database:
                     images_left = 3
                 else:
                     images_left = subscription.images_left
-                    
-                return True, images_left
                 
+                logger.info(f"User {user_id} has {images_left} images left")
+                return True, images_left
+            
+            except Exception as e:
+                session.rollback()
+                raise e
+            
             finally:
                 session.close()
                 
