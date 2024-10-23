@@ -34,43 +34,14 @@ class Database:
             self.database_url,
             pool_size=5,
             max_overflow=10,
-            pool_timeout=30,
-            pool_pre_ping=True,
             echo=True
         )
         
+        # Создаем таблицы
+        Base.metadata.create_all(self.engine)
+        
         session_factory = sessionmaker(bind=self.engine)
         self.Session = scoped_session(session_factory)
-
-    def init_db(self):
-        """Инициализация базы данных"""
-        try:
-            logger.info("Starting database initialization...")
-            
-            # Удаляем все таблицы и создаем заново
-            Base.metadata.drop_all(self.engine)
-            logger.info("Dropped all existing tables")
-            
-            # Создаем все таблицы
-            Base.metadata.create_all(self.engine)
-            logger.info("Created all tables")
-            
-            # Проверяем созданные таблицы
-            inspector = inspect(self.engine)
-            tables = inspector.get_table_names()
-            logger.info(f"Available tables: {tables}")
-            
-            # Проверяем структуру таблиц
-            for table_name in tables:
-                columns = inspector.get_columns(table_name)
-                column_info = [f"{col['name']} ({col['type']})" for col in columns]
-                logger.info(f"Table {table_name} columns: {', '.join(column_info)}")
-            
-            return True
-        
-        except Exception as e:
-            logger.error(f"Error initializing database: {e}")
-            raise
 
     def check_subscription(self, user_id: int) -> tuple:
         """Проверка подписки пользователя"""
@@ -89,11 +60,12 @@ class Database:
                     )
                     session.add(subscription)
                     session.commit()
+                    logger.info(f"Created subscription for user {user_id}")
                     images_left = 3
                 else:
                     images_left = subscription.images_left
+                    logger.info(f"Found existing subscription for user {user_id} with {images_left} images")
                 
-                logger.info(f"User {user_id} has {images_left} images left")
                 return True, images_left
             
             except Exception as e:
