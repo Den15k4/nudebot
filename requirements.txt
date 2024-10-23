@@ -4,3 +4,4 @@ aiohttp==3.8.4
 Pillow==9.5.0
 stability-sdk==0.8.0
 SQLAlchemy==1.4.41
+psycopg2-binary==2.9.5

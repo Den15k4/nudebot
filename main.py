@@ -10,9 +10,14 @@ import stability_sdk.interfaces.gooseai.generation.generation_pb2 as generation
 from stability_sdk import client
 import io
 from PIL import Image
+from sqlalchemy import inspect
 
 # Настройка логирования
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 # Загрузка конфигурации
 config = load_config()
@@ -23,10 +28,7 @@ storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
 
 # Инициализация базы данных
-db = Database(config.DATABASE_URL or 'bot_database.db')
-
-# Важно: инициализируем базу данных перед использованием
-db.init_db()
+db = Database(config.DATABASE_URL)
 
 # Инициализация Stability API
 stability_api = client.StabilityInference(
@@ -152,9 +154,13 @@ if __name__ == '__main__':
     executor.start_polling(dp, skip_updates=True)
 async def on_startup(_):
     """Действия при запуске бота"""
-    logging.info("Инициализация базы данных...")
-    db.init_db()  # Повторная инициализация при запуске для надежности
-    logging.info("База данных инициализирована")
+    try:
+        logger.info("Initializing database...")
+        db.init_db()
+        logger.info("Database initialized successfully")
+    except Exception as e:
+        logger.error(f"Failed to initialize database: {e}")
+        raise
 
 if __name__ == '__main__':
     from aiogram import executor

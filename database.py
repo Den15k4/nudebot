@@ -1,92 +1,127 @@
-import sqlite3
-from datetime import datetime, timedelta
 import logging
-import os
+from datetime import datetime, timedelta
+from sqlalchemy import create_engine, Column, Integer, String, DateTime
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker, scoped_session
+from sqlalchemy.sql import func
+
+# Настройка логирования
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+Base = declarative_base()
+
+class User(Base):
+    __tablename__ = 'users'
+    
+    user_id = Column(Integer, primary_key=True)
+    username = Column(String)
+    registered_at = Column(DateTime, default=func.now())
+
+class Subscription(Base):
+    __tablename__ = 'subscriptions'
+    
+    user_id = Column(Integer, primary_key=True)
+    images_left = Column(Integer, default=3)
+    subscription_end = Column(DateTime)
 
 class Database:
     def __init__(self, database_url):
         self.database_url = database_url
-        logging.info(f"Initializing database with URL: {database_url}")
+        logger.info(f"Database URL: {database_url}")
+        
+        # Создаем engine для PostgreSQL
+        self.engine = create_engine(
+            self.database_url,
+            pool_size=5,
+            max_overflow=10,
+            echo=True
+        )
+        
+        # Создаем фабрику сессий
+        session_factory = sessionmaker(bind=self.engine)
+        self.Session = scoped_session(session_factory)
 
     def init_db(self):
-        """Инициализация базы данных с проверками"""
+        """Инициализация базы данных"""
         try:
-            logging.info("Starting database initialization...")
-            conn = sqlite3.connect(self.database_url)
-            c = conn.cursor()
-            
-            # Таблица пользователей
-            c.execute('''
-                CREATE TABLE IF NOT EXISTS users (
-                    user_id INTEGER PRIMARY KEY,
-                    username TEXT,
-                    registered_at TEXT
-                )
-            ''')
-            logging.info("Users table created/verified")
-            
-            # Таблица подписок
-            c.execute('''
-                CREATE TABLE IF NOT EXISTS subscriptions (
-                    user_id INTEGER PRIMARY KEY,
-                    images_left INTEGER DEFAULT 3,
-                    subscription_end TEXT
-                )
-            ''')
-            logging.info("Subscriptions table created/verified")
+            logger.info("Starting database initialization...")
+            Base.metadata.create_all(self.engine)
+            logger.info("Database tables created successfully")
             
             # Проверяем создание таблиц
-            c.execute("SELECT name FROM sqlite_master WHERE type='table'")
-            tables = c.fetchall()
-            logging.info(f"Available tables: {tables}")
-            
-            conn.commit()
-            conn.close()
-            logging.info("Database initialization completed successfully")
+            inspector = inspect(self.engine)
+            tables = inspector.get_table_names()
+            logger.info(f"Available tables: {tables}")
             
         except Exception as e:
-            logging.error(f"Error initializing database: {e}")
+            logger.error(f"Error initializing database: {e}")
             raise
 
     def check_subscription(self, user_id: int) -> tuple:
-        """Проверка подписки пользователя с созданием записи если её нет"""
+        """Проверка подписки пользователя"""
         try:
-            conn = sqlite3.connect(self.database_url)
-            c = conn.cursor()
-            
-            # Проверяем существование подписки
-            c.execute('SELECT images_left FROM subscriptions WHERE user_id = ?', (user_id,))
-            result = c.fetchone()
-            
-            if not result:
-                logging.info(f"Creating new subscription for user {user_id}")
-                # Если подписки нет, создаем тестовую с 3 изображениями
-                subscription_end = (datetime.now() + timedelta(days=30)).strftime('%Y-%m-%d %H:%M:%S')
-                c.execute(
-                    'INSERT INTO subscriptions (user_id, images_left, subscription_end) VALUES (?, ?, ?)',
-                    (user_id, 3, subscription_end)
-                )
-                conn.commit()
-                images_left = 3
-            else:
-                images_left = result[0]
+            session = self.Session()
+            try:
+                subscription = session.query(Subscription).filter_by(user_id=user_id).first()
                 
-            conn.close()
-            return True, images_left
-            
+                if not subscription:
+                    logger.info(f"Creating new subscription for user {user_id}")
+                    subscription = Subscription(
+                        user_id=user_id,
+                        images_left=3,
+                        subscription_end=datetime.now() + timedelta(days=30)
+                    )
+                    session.add(subscription)
+                    session.commit()
+                    images_left = 3
+                else:
+                    images_left = subscription.images_left
+                    
+                return True, images_left
+                
+            finally:
+                session.close()
+                
         except Exception as e:
-            logging.error(f"Error checking subscription: {e}")
+            logger.error(f"Error checking subscription: {e}")
             return False, 0
 
     def update_images_count(self, user_id: int):
         """Обновление количества доступных изображений"""
         try:
-            conn = sqlite3.connect(self.database_url)
-            c = conn.cursor()
-            c.execute('UPDATE subscriptions SET images_left = images_left - 1 WHERE user_id = ?', (user_id,))
-            conn.commit()
-            conn.close()
-            logging.info(f"Updated images count for user {user_id}")
+            session = self.Session()
+            try:
+                subscription = session.query(Subscription).filter_by(user_id=user_id).first()
+                
+                if subscription and subscription.images_left > 0:
+                    subscription.images_left -= 1
+                    session.commit()
+                    logger.info(f"Updated images count for user {user_id}")
+                
+            finally:
+                session.close()
+                
         except Exception as e:
-            logging.error(f"Error updating images count: {e}")
+            logger.error(f"Error updating images count: {e}")
+            raise
+
+    def register_user(self, user_id: int, username: str):
+        """Регистрация нового пользователя"""
+        try:
+            session = self.Session()
+            try:
+                user = session.query(User).filter_by(user_id=user_id).first()
+                
+                if not user:
+                    user = User(user_id=user_id, username=username)
+                    session.add(user)
+                    session.commit()
+                    logger.info(f"Registered new user: {username} ({user_id})")
+                
+            finally:
+                session.close()
+                
+        except Exception as e:
+            logger.error(f"Error registering user: {e}")
             raise
