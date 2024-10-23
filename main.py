@@ -290,15 +290,11 @@ async def on_startup(dp: Dispatcher):
     try:
         # Проверка подключения к базе данных
         logger.info("Checking database connection...")
-        # Проверяем подключение простым запросом используя существующий метод
         inspector = inspect(db.engine)
         tables = inspector.get_table_names()
         logger.info(f"Connected to database. Available tables: {tables}")
         
-        # Проверка подключения к Replicate
-        logger.info("Checking Replicate API connection...")
-        replicate_client.version
-        logger.info("Replicate API connection successful")
+        logger.info("Bot started successfully")
         
     except Exception as e:
         logger.error(f"Error during startup: {e}")
