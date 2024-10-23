@@ -131,6 +131,8 @@ async def generate_avatar(message: types.Message, state: FSMContext):
         
         # Подготовка изображения
         image = Image.open(io.BytesIO(photo_bytes))
+        
+        # Сохраняем пропорции при изменении размера
         width, height = image.size
         new_size = 1024
         ratio = min(new_size/width, new_size/height)
@@ -141,14 +143,15 @@ async def generate_avatar(message: types.Message, state: FSMContext):
         try:
             logger.info(f"Starting image generation for user {message.from_user.id} with style {style}")
             
-            # Генерация изображения
+            # Обновленные параметры генерации для лучшего контроля
             answers = stability_api.generate(
                 prompt=AVATAR_STYLES[style],
                 init_image=image,
-                start_schedule=0.6,
+                start_schedule=0.8,  # Увеличиваем влияние исходного изображения
+                end_schedule=0.2,    # Уменьшаем влияние промпта
                 seed=123,
-                steps=40,
-                cfg_scale=7.0,
+                steps=50,            # Увеличиваем количество шагов для лучшего качества
+                cfg_scale=6.0,       # Уменьшаем влияние промпта
                 width=1024,
                 height=1024,
                 samples=1
