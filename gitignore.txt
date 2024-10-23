@@ -38,3 +38,6 @@ ENV/
 
 # Logs
 *.log
+
+# Other
+.DS_Store

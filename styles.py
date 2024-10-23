@@ -1,22 +1,17 @@
 AVATAR_STYLES = {
     "космонавт": (
-        "professional photo of the same person wearing a detailed white space suit, "
-        "astronaut helmet with reflections, space station background, "
-        "cinematic lighting, high end photography, 8k, highly detailed"
+        "professional portrait photograph of the same person wearing a detailed white space suit, "
+        "astronaut helmet, space station in background, epic lighting, "
+        "cinematic composition, 8k uhd, highly detailed, photorealistic"
     ),
     "киберпанк": (
-        "same person in cyberpunk style, neon lights, futuristic city background, "
-        "cinematic lighting, highly detailed, neon accents, "
-        "professional photo quality, 8k, ray tracing"
+        "professional portrait of the same person, cyberpunk style, neon city background, "
+        "moody lighting, highly detailed, vibrant neon accents, "
+        "cinematic quality, 8k uhd, photorealistic"
     ),
     "супергерой": (
-        "same person as a superhero, dynamic pose, city skyline background, "
-        "dramatic lighting, comic book style, high end digital art, "
-        "detailed costume, professional quality, 8k"
-    ),
-    "фэнтези": (
-        "same person as a fantasy character, magical forest background, "
-        "mystical atmosphere, detailed fantasy art style, "
-        "professional photography quality, 8k, ray tracing"
+        "professional portrait of the same person as a superhero, dynamic lighting, "
+        "city background, dramatic atmosphere, detailed costume design, "
+        "cinematic quality, 8k uhd, photorealistic"
     )
 }

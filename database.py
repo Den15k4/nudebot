@@ -15,14 +15,14 @@ Base = declarative_base(metadata=metadata)
 class User(Base):
     __tablename__ = 'users'
     
-    user_id = Column(BigInteger, primary_key=True, autoincrement=False)  # BigInteger for Telegram ID
+    user_id = Column(BigInteger, primary_key=True, autoincrement=False)
     username = Column(String(100))
     registered_at = Column(DateTime, server_default=func.now())
 
 class Subscription(Base):
     __tablename__ = 'subscriptions'
     
-    user_id = Column(BigInteger, primary_key=True, autoincrement=False)  # BigInteger for Telegram ID
+    user_id = Column(BigInteger, primary_key=True, autoincrement=False)
     images_left = Column(Integer, default=3)
     subscription_end = Column(DateTime)
 
@@ -55,7 +55,6 @@ class Database:
         try:
             session = self.Session()
             try:
-                # Проверяем существование пользователя
                 user = session.query(User).filter_by(user_id=user_id).first()
                 
                 if not user:

@@ -5,8 +5,8 @@ from aiogram.contrib.fsm_storage.memory import MemoryStorage
 from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
 from config import load_config
-from database import Database, Base
-from sqlalchemy import inspect
+from database import Database
+from styles import AVATAR_STYLES
 import stability_sdk.interfaces.gooseai.generation.generation_pb2 as generation
 from stability_sdk import client
 import io
@@ -30,72 +30,56 @@ dp = Dispatcher(bot, storage=storage)
 # Инициализация базы данных
 db = Database(config.DATABASE_URL)
 
-# Инициализация Stability API с правильной моделью
+# Инициализация Stability API
 stability_api = client.StabilityInference(
     key=config.STABILITY_KEY,
     verbose=True,
-    engine="stable-diffusion-xl-1024-v1-0"  # Используем SDXL 1.0
+    engine="stable-diffusion-xl-1024-v1-0"
 )
 
 class UserState(StatesGroup):
     waiting_for_photo = State()
     choosing_style = State()
 
-# Стили аватаров
-AVATAR_STYLES = {
-    "космонавт": "same person wearing a detailed space suit, astronaut helmet, space background, highly detailed, professional photo",
-    "киберпанк": "same person in cyberpunk style, neon lights, futuristic city background, highly detailed",
-    "супергерой": "same person as a superhero, dynamic pose, city background, comic book style, highly detailed"
-}
-
 @dp.message_handler(commands=['start'])
 async def cmd_start(message: types.Message):
-    """
-    Обработчик команды /start
-    """
+    """Обработчик команды /start"""
     try:
         logger.info(f"Processing /start command from user {message.from_user.id}")
         
-        # Создаём простую клавиатуру
         keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
         keyboard.add(types.KeyboardButton("Создать аватар"))
         
-        # Отправляем приветственное сообщение
-        await message.answer(
-            "👋 Привет! Я бот для создания стильных аватаров.\n"
-            "Нажмите 'Создать аватар' чтобы начать!",
-            reply_markup=keyboard
-        )
-        
-        # Регистрируем пользователя и проверяем подписку
+        # Регистрируем пользователя
         try:
-            logger.info(f"Registering user {message.from_user.id}")
             db.register_user(message.from_user.id, message.from_user.username)
-            
-            logger.info(f"Checking subscription for user {message.from_user.id}")
             has_sub, images_left = db.check_subscription(message.from_user.id)
             
-            # Отправляем информацию о доступных изображениях
-            if has_sub:
-                await message.answer(f"У вас осталось изображений: {images_left}")
-            else:
-                await message.answer("Произошла ошибка при проверке подписки")
-                
+            await message.answer(
+                "👋 Привет! Я бот для создания стильных аватаров.\n"
+                "Нажмите 'Создать аватар' чтобы начать!",
+                reply_markup=keyboard
+            )
+            
+            await message.answer(f"У вас осталось изображений: {images_left}")
+            
         except Exception as db_error:
             logger.error(f"Database error in start command: {db_error}")
-            # Не прерываем выполнение, просто логируем ошибку
+            await message.answer(
+                "Произошла ошибка при проверке подписки. "
+                "Пожалуйста, попробуйте позже.",
+                reply_markup=keyboard
+            )
             
     except Exception as e:
         logger.error(f"Error in start command: {e}")
         await message.answer(
-            "Произошла ошибка. Пожалуйста, попробуйте позже или напишите команду /start ещё раз."
+            "Произошла ошибка. Пожалуйста, попробуйте позже."
         )
 
 @dp.message_handler(text="Создать аватар")
 async def request_photo(message: types.Message):
-    """
-    Обработчик кнопки "Создать аватар"
-    """
+    """Обработчик кнопки Создать аватар"""
     try:
         has_sub, images_left = db.check_subscription(message.from_user.id)
         
@@ -112,9 +96,7 @@ async def request_photo(message: types.Message):
 
 @dp.message_handler(content_types=['photo'], state=UserState.waiting_for_photo)
 async def process_photo(message: types.Message, state: FSMContext):
-    """
-    Обработчик полученной фотографии
-    """
+    """Обработчик полученной фотографии"""
     try:
         photo = await message.photo[-1].download(destination_file=io.BytesIO())
         
@@ -135,9 +117,7 @@ async def process_photo(message: types.Message, state: FSMContext):
 
 @dp.message_handler(state=UserState.choosing_style)
 async def generate_avatar(message: types.Message, state: FSMContext):
-    """
-    Генерация аватара в выбранном стиле
-    """
+    """Генерация аватара в выбранном стиле"""
     try:
         style = message.text
         if style not in AVATAR_STYLES:
@@ -151,23 +131,30 @@ async def generate_avatar(message: types.Message, state: FSMContext):
         
         # Подготовка изображения
         image = Image.open(io.BytesIO(photo_bytes))
-        image = image.resize((1024, 1024))  # Увеличиваем размер для SDXL
+        width, height = image.size
+        new_size = 1024
+        ratio = min(new_size/width, new_size/height)
+        new_width = int(width * ratio)
+        new_height = int(height * ratio)
+        image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
         
         try:
+            logger.info(f"Starting image generation for user {message.from_user.id} with style {style}")
+            
             # Генерация изображения
             answers = stability_api.generate(
                 prompt=AVATAR_STYLES[style],
                 init_image=image,
                 start_schedule=0.6,
                 seed=123,
-                steps=40,  # Увеличиваем количество шагов
-                cfg_scale=7.0,  # Настраиваем силу соответствия промпту
+                steps=40,
+                cfg_scale=7.0,
                 width=1024,
                 height=1024,
-                sampler=generation.SAMPLER_K_DPMPP_2M,  # Используем более стабильный сэмплер
-                samples=1,
-                style_preset="photographic"  # Добавляем стиль
+                samples=1
             )
+            
+            logger.info("Generation completed, processing results")
             
             # Обработка результата
             for resp in answers:
@@ -184,6 +171,7 @@ async def generate_avatar(message: types.Message, state: FSMContext):
                             img_bytes,
                             caption=f"Вот ваш аватар в стиле '{style}'!\nОсталось изображений: {images_left}"
                         )
+                        logger.info(f"Successfully sent generated image to user {message.from_user.id}")
             
         except Exception as gen_error:
             logger.error(f"Stability AI error: {gen_error}")
@@ -194,7 +182,10 @@ async def generate_avatar(message: types.Message, state: FSMContext):
             return
             
         finally:
-            await processing_msg.delete()
+            try:
+                await processing_msg.delete()
+            except Exception as e:
+                logger.error(f"Error deleting processing message: {e}")
         
     except Exception as e:
         logger.error(f"Error generating avatar: {e}")
@@ -207,19 +198,10 @@ async def generate_avatar(message: types.Message, state: FSMContext):
         keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
         keyboard.add(types.KeyboardButton("Создать аватар"))
         await message.answer("Хотите создать ещё один аватар?", reply_markup=keyboard)
-        
-async def on_startup(_):
-    """Действия при запуске бота"""
-    try:
-        logger.info("Starting bot initialization...")
-        logger.info("Bot started successfully")
-    except Exception as e:
-        logger.error(f"Failed to initialize bot: {e}")
-        raise
 
 def main():
     logger.info("Starting bot")
-    executor.start_polling(dp, skip_updates=True, on_startup=on_startup)
+    executor.start_polling(dp, skip_updates=True)
 
 if __name__ == '__main__':
     main()
