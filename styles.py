@@ -1,17 +1,26 @@
 AVATAR_STYLES = {
     "космонавт": (
-        "professional portrait photograph of the same person wearing a detailed white space suit, "
-        "astronaut helmet, space station in background, epic lighting, "
-        "cinematic composition, 8k uhd, highly detailed, photorealistic"
+        "photo of exactly the same person with identical face, hair and facial features, "
+        "wearing a white space suit, same expression, same pose, same background, "
+        "keep all facial details identical, same hair style and color, "
+        "preserve face shape, preserve eyes, preserve nose, preserve mouth, preserve skin tone, "
+        "only change clothing to space suit, highly detailed professional photo, "
+        "negative prompt: different face, different features, change face, change expression"
     ),
     "киберпанк": (
-        "professional portrait of the same person, cyberpunk style, neon city background, "
-        "moody lighting, highly detailed, vibrant neon accents, "
-        "cinematic quality, 8k uhd, photorealistic"
+        "photo of exactly the same person with identical face, hair and facial features, "
+        "wearing futuristic cyberpunk clothing, same expression, same pose, same background, "
+        "keep all facial details identical, same hair style and color, "
+        "preserve face shape, preserve eyes, preserve nose, preserve mouth, preserve skin tone, "
+        "only change clothing to cyberpunk style, highly detailed professional photo, "
+        "negative prompt: different face, different features, change face, change expression"
     ),
     "супергерой": (
-        "professional portrait of the same person as a superhero, dynamic lighting, "
-        "city background, dramatic atmosphere, detailed costume design, "
-        "cinematic quality, 8k uhd, photorealistic"
+        "photo of exactly the same person with identical face, hair and facial features, "
+        "wearing superhero costume, same expression, same pose, same background, "
+        "keep all facial details identical, same hair style and color, "
+        "preserve face shape, preserve eyes, preserve nose, preserve mouth, preserve skin tone, "
+        "only change clothing to superhero suit, highly detailed professional photo, "
+        "negative prompt: different face, different features, change face, change expression"
     )
 }
