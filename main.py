@@ -6,13 +6,11 @@ from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
 from config import load_config
 from database import Database
-from sqlalchemy import inspect  # Добавляем импорт inspect
-import replicate
+from styles import AVATAR_STYLES
+import stability_sdk.interfaces.gooseai.generation.generation_pb2 as generation
+from stability_sdk import client
 import io
 from PIL import Image
-import aiohttp
-from datetime import datetime
-import traceback
 
 # Настройка логирования
 logging.basicConfig(
@@ -32,119 +30,16 @@ dp = Dispatcher(bot, storage=storage)
 # Инициализация базы данных
 db = Database(config.DATABASE_URL)
 
-# Инициализация Replicate клиента
-replicate_client = replicate.Client(api_token=config.REPLICATE_TOKEN)
-
-# Стили и промпты
-STYLES = {
-    "космонавт": {
-        "prompt": (
-            "change ONLY the clothes to a detailed white NASA spacesuit with helmet, "
-            "keep face EXACTLY the same, keep hair EXACTLY the same, "
-            "keep background EXACTLY the same, maintain facial expression, maintain pose, "
-            "photorealistic, detailed, high quality"
-        ),
-        "negative_prompt": (
-            "different face, changed face, modified features, different person, "
-            "deformed, distorted, cartoon, artistic, painting, drawing, anime, "
-            "different hairstyle, different expression"
-        )
-    },
-    "киберпанк": {
-        "prompt": (
-            "change ONLY the clothes to futuristic cyberpunk outfit with neon accents, "
-            "keep face EXACTLY the same, keep hair EXACTLY the same, "
-            "keep background EXACTLY the same, maintain facial expression, maintain pose, "
-            "photorealistic, detailed, high quality"
-        ),
-        "negative_prompt": (
-            "different face, changed face, modified features, different person, "
-            "deformed, distorted, cartoon, artistic, painting, drawing, anime, "
-            "different hairstyle, different expression"
-        )
-    },
-    "супергерой": {
-        "prompt": (
-            "change ONLY the clothes to modern superhero costume with subtle details, "
-            "keep face EXACTLY the same, keep hair EXACTLY the same, "
-            "keep background EXACTLY the same, maintain facial expression, maintain pose, "
-            "photorealistic, detailed, high quality"
-        ),
-        "negative_prompt": (
-            "different face, changed face, modified features, different person, "
-            "deformed, distorted, cartoon, artistic, painting, drawing, anime, "
-            "different hairstyle, different expression"
-        )
-    }
-}
+# Инициализация Stability API
+stability_api = client.StabilityInference(
+    key=config.STABILITY_KEY,
+    verbose=True,
+    engine="stable-diffusion-xl-1024-v1-0"
+)
 
 class UserState(StatesGroup):
     waiting_for_photo = State()
     choosing_style = State()
-
-def prepare_image(image_bytes: bytes) -> bytes:
-    """Подготовка изображения перед обработкой"""
-    try:
-        # Открываем изображение
-        image = Image.open(io.BytesIO(image_bytes))
-        
-        # Конвертируем в RGB если нужно
-        if image.mode != 'RGB':
-            image = image.convert('RGB')
-        
-        # Изменяем размер, сохраняя пропорции
-        max_size = 1024
-        ratio = min(max_size/image.size[0], max_size/image.size[1])
-        new_size = (int(image.size[0]*ratio), int(image.size[1]*ratio))
-        image = image.resize(new_size, Image.Resampling.LANCZOS)
-        
-        # Сохраняем в bytes
-        buffer = io.BytesIO()
-        image.save(buffer, format='PNG')
-        buffer.seek(0)
-        
-        return buffer.getvalue()
-    except Exception as e:
-        logger.error(f"Error preparing image: {e}")
-        raise
-
-async def process_image_with_replicate(image_bytes: bytes, style: str) -> bytes:
-    """Обработка изображения через Replicate API"""
-    try:
-        # Подготавливаем изображение
-        prepared_image = prepare_image(image_bytes)
-        
-        logger.info(f"Starting image processing with style: {style}")
-        
-        # Запускаем модель
-        output = replicate_client.run(
-            "timothybrooks/instruct-pix2pix:30c1d0b916a6f8efce20493f5d61ee27491ab2a60437c13c588468b9810ec23f",
-            input={
-                "image": prepared_image,
-                "prompt": STYLES[style]["prompt"],
-                "negative_prompt": STYLES[style]["negative_prompt"],
-                "num_outputs": 1,
-                "guidance_scale": 7.5,
-                "image_guidance_scale": 1.5,
-                "steps": 100
-            }
-        )
-        
-        logger.info("Image processing completed")
-        
-        # Получаем результат
-        if isinstance(output, list) and len(output) > 0:
-            image_url = output[0]
-            async with aiohttp.ClientSession() as session:
-                async with session.get(image_url) as response:
-                    if response.status == 200:
-                        return await response.read()
-        
-        raise ValueError("Failed to get valid output from Replicate")
-    
-    except Exception as e:
-        logger.error(f"Error in process_image_with_replicate: {e}\n{traceback.format_exc()}")
-        raise
 
 @dp.message_handler(commands=['start'])
 async def cmd_start(message: types.Message):
@@ -155,8 +50,8 @@ async def cmd_start(message: types.Message):
         keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
         keyboard.add(types.KeyboardButton("Создать аватар"))
         
+        # Регистрируем пользователя
         try:
-            # Регистрируем пользователя
             db.register_user(message.from_user.id, message.from_user.username)
             has_sub, images_left = db.check_subscription(message.from_user.id)
             
@@ -209,7 +104,7 @@ async def process_photo(message: types.Message, state: FSMContext):
             data['original_photo'] = photo.getvalue()
         
         keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        for style in STYLES.keys():
+        for style in AVATAR_STYLES.keys():
             keyboard.add(types.KeyboardButton(style))
         
         await UserState.choosing_style.set()
@@ -225,7 +120,7 @@ async def generate_avatar(message: types.Message, state: FSMContext):
     """Генерация аватара в выбранном стиле"""
     try:
         style = message.text
-        if style not in STYLES:
+        if style not in AVATAR_STYLES:
             await message.answer("Пожалуйста, выберите стиль из предложенных вариантов.")
             return
         
@@ -234,22 +129,52 @@ async def generate_avatar(message: types.Message, state: FSMContext):
         
         processing_msg = await message.answer("Генерирую аватар... Это может занять около минуты.")
         
+        # Подготовка изображения
+        image = Image.open(io.BytesIO(photo_bytes))
+        width, height = image.size
+        new_size = 1024
+        ratio = min(new_size/width, new_size/height)
+        new_width = int(width * ratio)
+        new_height = int(height * ratio)
+        image = image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+        
         try:
-            # Обработка изображения
-            result_bytes = await process_image_with_replicate(photo_bytes, style)
+            logger.info(f"Starting image generation for user {message.from_user.id} with style {style}")
             
-            # Обновляем счетчик изображений
-            db.update_images_count(message.from_user.id)
-            has_sub, images_left = db.check_subscription(message.from_user.id)
-            
-            # Отправляем результат
-            await message.answer_photo(
-                result_bytes,
-                caption=f"Вот ваш аватар в стиле '{style}'!\nОсталось изображений: {images_left}"
+            # Генерация изображения
+            answers = stability_api.generate(
+                prompt=AVATAR_STYLES[style],
+                init_image=image,
+                start_schedule=0.6,
+                seed=123,
+                steps=40,
+                cfg_scale=7.0,
+                width=1024,
+                height=1024,
+                samples=1
             )
             
+            logger.info("Generation completed, processing results")
+            
+            # Обработка результата
+            for resp in answers:
+                for artifact in resp.artifacts:
+                    if artifact.type == generation.ARTIFACT_IMAGE:
+                        img_bytes = io.BytesIO(artifact.binary)
+                        
+                        # Обновляем счетчик изображений
+                        db.update_images_count(message.from_user.id)
+                        has_sub, images_left = db.check_subscription(message.from_user.id)
+                        
+                        # Отправляем результат
+                        await message.answer_photo(
+                            img_bytes,
+                            caption=f"Вот ваш аватар в стиле '{style}'!\nОсталось изображений: {images_left}"
+                        )
+                        logger.info(f"Successfully sent generated image to user {message.from_user.id}")
+            
         except Exception as gen_error:
-            logger.error(f"Generation error: {gen_error}")
+            logger.error(f"Stability AI error: {gen_error}")
             await message.answer(
                 "Произошла ошибка при генерации изображения. "
                 "Пожалуйста, попробуйте другой стиль или повторите позже."
@@ -274,42 +199,9 @@ async def generate_avatar(message: types.Message, state: FSMContext):
         keyboard.add(types.KeyboardButton("Создать аватар"))
         await message.answer("Хотите создать ещё один аватар?", reply_markup=keyboard)
 
-@dp.message_handler(content_types=types.ContentType.ANY)
-async def unknown_message(message: types.Message):
-    """Обработчик неизвестных сообщений"""
-    keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    keyboard.add(types.KeyboardButton("Создать аватар"))
-    await message.answer(
-        "Я вас не понимаю. Нажмите 'Создать аватар' чтобы начать!",
-        reply_markup=keyboard
-    )
-
-async def on_startup(dp: Dispatcher):
-    """Действия при запуске бота"""
-    logger.info("Bot starting...")
-    try:
-        # Проверка подключения к базе данных
-        logger.info("Checking database connection...")
-        inspector = inspect(db.engine)
-        tables = inspector.get_table_names()
-        logger.info(f"Connected to database. Available tables: {tables}")
-        
-        logger.info("Bot started successfully")
-        
-    except Exception as e:
-        logger.error(f"Error during startup: {e}")
-        raise
-    
-    logger.info("Bot started successfully")
-
 def main():
-    """Запуск бота"""
     logger.info("Starting bot")
-    executor.start_polling(dp, skip_updates=True, on_startup=on_startup)
+    executor.start_polling(dp, skip_updates=True)
 
 if __name__ == '__main__':
-    try:
-        main()
-    except Exception as e:
-        logger.error(f"Critical error: {e}\n{traceback.format_exc()}")
-        raise
+    main()
