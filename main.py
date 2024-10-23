@@ -6,6 +6,7 @@ from aiogram.dispatcher import FSMContext
 from aiogram.dispatcher.filters.state import State, StatesGroup
 from config import load_config
 from database import Database
+from sqlalchemy import inspect  # Добавляем импорт inspect
 import replicate
 import io
 from PIL import Image
