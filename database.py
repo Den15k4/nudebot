@@ -14,14 +14,14 @@ Base = declarative_base()
 class User(Base):
     __tablename__ = 'users'
     
-    user_id = Column(BigInteger, primary_key=True)  # Изменено на BigInteger
+    user_id = Column(BigInteger, primary_key=True)
     username = Column(String)
     registered_at = Column(DateTime, default=func.now())
 
 class Subscription(Base):
     __tablename__ = 'subscriptions'
     
-    user_id = Column(BigInteger, primary_key=True)  # Изменено на BigInteger
+    user_id = Column(BigInteger, primary_key=True)
     images_left = Column(Integer, default=3)
     subscription_end = Column(DateTime)
 
@@ -30,7 +30,6 @@ class Database:
         self.database_url = database_url
         logger.info(f"Initializing database with URL: {database_url}")
         
-        # Создаем engine для PostgreSQL
         self.engine = create_engine(
             self.database_url,
             pool_size=5,
@@ -40,7 +39,6 @@ class Database:
             echo=True
         )
         
-        # Создаем фабрику сессий
         session_factory = sessionmaker(bind=self.engine)
         self.Session = scoped_session(session_factory)
 
@@ -49,7 +47,7 @@ class Database:
         try:
             logger.info("Starting database initialization...")
             
-            # Удаляем все таблицы (если есть) и создаем заново
+            # Удаляем все таблицы и создаем заново
             Base.metadata.drop_all(self.engine)
             logger.info("Dropped all existing tables")
             
@@ -65,7 +63,8 @@ class Database:
             # Проверяем структуру таблиц
             for table_name in tables:
                 columns = inspector.get_columns(table_name)
-                logger.info(f"Table {table_name} columns: {[f'{column['name']} ({column['type']})' for column in columns]}")
+                column_info = [f"{col['name']} ({col['type']})" for col in columns]
+                logger.info(f"Table {table_name} columns: {', '.join(column_info)}")
             
             return True
         
@@ -120,7 +119,7 @@ class Database:
                     subscription.images_left -= 1
                     session.commit()
                     logger.info(f"Updated images count for user {user_id}, now has {subscription.images_left} images")
-                    
+                
             finally:
                 session.close()
                 
