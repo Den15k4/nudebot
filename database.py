@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime, timedelta
-from sqlalchemy import create_engine, Column, Integer, String, DateTime, inspect
+from sqlalchemy import create_engine, Column, BigInteger, Integer, String, DateTime, inspect
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, scoped_session
 from sqlalchemy.sql import func
@@ -14,14 +14,14 @@ Base = declarative_base()
 class User(Base):
     __tablename__ = 'users'
     
-    user_id = Column(Integer, primary_key=True)
+    user_id = Column(BigInteger, primary_key=True)  # Изменено на BigInteger
     username = Column(String)
     registered_at = Column(DateTime, default=func.now())
 
 class Subscription(Base):
     __tablename__ = 'subscriptions'
     
-    user_id = Column(Integer, primary_key=True)
+    user_id = Column(BigInteger, primary_key=True)  # Изменено на BigInteger
     images_left = Column(Integer, default=3)
     subscription_end = Column(DateTime)
 
@@ -30,7 +30,7 @@ class Database:
         self.database_url = database_url
         logger.info(f"Initializing database with URL: {database_url}")
         
-        # Создаем engine для PostgreSQL с дополнительными параметрами
+        # Создаем engine для PostgreSQL
         self.engine = create_engine(
             self.database_url,
             pool_size=5,
@@ -65,7 +65,7 @@ class Database:
             # Проверяем структуру таблиц
             for table_name in tables:
                 columns = inspector.get_columns(table_name)
-                logger.info(f"Table {table_name} columns: {[column['name'] for column in columns]}")
+                logger.info(f"Table {table_name} columns: {[f'{column['name']} ({column['type']})' for column in columns]}")
             
             return True
         
@@ -78,12 +78,7 @@ class Database:
         try:
             session = self.Session()
             try:
-                # Проверяем существование таблицы
-                inspector = inspect(self.engine)
-                if 'subscriptions' not in inspector.get_table_names():
-                    logger.error("Subscriptions table does not exist!")
-                    self.init_db()  # Пересоздаем таблицы если их нет
-                
+                logger.info(f"Checking subscription for user {user_id}")
                 subscription = session.query(Subscription).filter_by(user_id=user_id).first()
                 
                 if not subscription:
@@ -103,8 +98,9 @@ class Database:
                 return True, images_left
             
             except Exception as e:
+                logger.error(f"Database error: {e}")
                 session.rollback()
-                raise e
+                raise
             
             finally:
                 session.close()
@@ -123,8 +119,8 @@ class Database:
                 if subscription and subscription.images_left > 0:
                     subscription.images_left -= 1
                     session.commit()
-                    logger.info(f"Updated images count for user {user_id}")
-                
+                    logger.info(f"Updated images count for user {user_id}, now has {subscription.images_left} images")
+                    
             finally:
                 session.close()
                 
