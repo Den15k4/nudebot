@@ -30,10 +30,11 @@ dp = Dispatcher(bot, storage=storage)
 # Инициализация базы данных
 db = Database(config.DATABASE_URL)
 
-# Инициализация Stability API
+# Инициализация Stability API с правильной моделью
 stability_api = client.StabilityInference(
     key=config.STABILITY_KEY,
     verbose=True,
+    engine="stable-diffusion-xl-1024-v1-0"  # Используем SDXL 1.0
 )
 
 class UserState(StatesGroup):
@@ -148,45 +149,65 @@ async def generate_avatar(message: types.Message, state: FSMContext):
         
         processing_msg = await message.answer("Генерирую аватар... Это может занять около минуты.")
         
+        # Подготовка изображения
         image = Image.open(io.BytesIO(photo_bytes))
-        image = image.resize((512, 512))
+        image = image.resize((1024, 1024))  # Увеличиваем размер для SDXL
         
-        answers = stability_api.generate(
-            prompt=AVATAR_STYLES[style],
-            init_image=image,
-            start_schedule=0.6,
-            seed=123,
-            steps=30,
-            cfg_scale=8.0,
-            width=512,
-            height=512,
-            samples=1,
-        )
-        
-        for resp in answers:
-            for artifact in resp.artifacts:
-                if artifact.type == generation.ARTIFACT_IMAGE:
-                    img_bytes = io.BytesIO(artifact.binary)
-                    
-                    db.update_images_count(message.from_user.id)
-                    has_sub, images_left = db.check_subscription(message.from_user.id)
-                    
-                    await message.answer_photo(
-                        img_bytes,
-                        caption=f"Вот ваш аватар в стиле '{style}'!\nОсталось изображений: {images_left}"
-                    )
-        
-        await processing_msg.delete()
+        try:
+            # Генерация изображения
+            answers = stability_api.generate(
+                prompt=AVATAR_STYLES[style],
+                init_image=image,
+                start_schedule=0.6,
+                seed=123,
+                steps=40,  # Увеличиваем количество шагов
+                cfg_scale=7.0,  # Настраиваем силу соответствия промпту
+                width=1024,
+                height=1024,
+                sampler=generation.SAMPLER_K_DPMPP_2M,  # Используем более стабильный сэмплер
+                samples=1,
+                style_preset="photographic"  # Добавляем стиль
+            )
+            
+            # Обработка результата
+            for resp in answers:
+                for artifact in resp.artifacts:
+                    if artifact.type == generation.ARTIFACT_IMAGE:
+                        img_bytes = io.BytesIO(artifact.binary)
+                        
+                        # Обновляем счетчик изображений
+                        db.update_images_count(message.from_user.id)
+                        has_sub, images_left = db.check_subscription(message.from_user.id)
+                        
+                        # Отправляем результат
+                        await message.answer_photo(
+                            img_bytes,
+                            caption=f"Вот ваш аватар в стиле '{style}'!\nОсталось изображений: {images_left}"
+                        )
+            
+        except Exception as gen_error:
+            logger.error(f"Stability AI error: {gen_error}")
+            await message.answer(
+                "Произошла ошибка при генерации изображения. "
+                "Пожалуйста, попробуйте другой стиль или повторите позже."
+            )
+            return
+            
+        finally:
+            await processing_msg.delete()
         
     except Exception as e:
         logger.error(f"Error generating avatar: {e}")
-        await message.answer("Произошла ошибка при генерации аватара.")
+        await message.answer(
+            "Произошла ошибка при генерации аватара. "
+            "Пожалуйста, попробуйте позже."
+        )
     finally:
         await state.finish()
         keyboard = types.ReplyKeyboardMarkup(resize_keyboard=True)
         keyboard.add(types.KeyboardButton("Создать аватар"))
         await message.answer("Хотите создать ещё один аватар?", reply_markup=keyboard)
-
+        
 async def on_startup(_):
     """Действия при запуске бота"""
     try:
