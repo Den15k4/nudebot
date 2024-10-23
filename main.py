@@ -23,7 +23,9 @@ storage = MemoryStorage()
 dp = Dispatcher(bot, storage=storage)
 
 # Инициализация базы данных
-db = Database(config.DATABASE_URL)
+db = Database(config.DATABASE_URL or 'bot_database.db')
+
+# Важно: инициализируем базу данных перед использованием
 db.init_db()
 
 # Инициализация Stability API
@@ -148,3 +150,14 @@ async def generate_avatar(message: types.Message, state: FSMContext):
 if __name__ == '__main__':
     from aiogram import executor
     executor.start_polling(dp, skip_updates=True)
+async def on_startup(_):
+    """Действия при запуске бота"""
+    logging.info("Инициализация базы данных...")
+    db.init_db()  # Повторная инициализация при запуске для надежности
+    logging.info("База данных инициализирована")
+
+if __name__ == '__main__':
+    from aiogram import executor
+    
+    # Запускаем бота с обработчиком запуска
+    executor.start_polling(dp, skip_updates=True, on_startup=on_startup)
