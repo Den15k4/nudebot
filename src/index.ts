@@ -74,6 +74,7 @@ async function processImage(imageBuffer: Buffer) {
         filename: 'image.jpg',
         contentType: 'image/jpeg'
     });
+    formData.append('id_gen', 'default'); // Добавляем обязательное поле id_gen
 
     try {
         const response = await apiClient.post('/undress', formData, {
@@ -85,14 +86,26 @@ async function processImage(imageBuffer: Buffer) {
             maxBodyLength: Infinity,
             timeout: 60000 // 60 секунд таймаут
         });
+        
+        // Добавим логирование для отладки
+        console.log('API Response:', response.data);
+        
+        if (response.data.error) {
+            throw new Error(`API Error: ${response.data.error}`);
+        }
+        
         return response.data;
     } catch (error) {
-        if (error instanceof Error) {
-            console.error('Ошибка API:', error.message);
+        if (axios.isAxiosError(error) && error.response?.data) {
+            console.error('API Error Response:', error.response.data);
+            throw new Error(`API Error: ${error.response.data.error || 'Unknown error'}`);
+        } else if (error instanceof Error) {
+            console.error('Request Error:', error.message);
+            throw error;
         } else {
-            console.error('Неизвестная ошибка API');
+            console.error('Unknown Error:', error);
+            throw new Error('Unknown error occurred');
         }
-        throw error;
     }
 }
 
