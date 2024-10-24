@@ -5,6 +5,7 @@ import { Pool } from 'pg';
 import dotenv from 'dotenv';
 import fs from 'fs';
 import path from 'path';
+import { AxiosError } from 'axios';
 
 dotenv.config();
 
@@ -48,11 +49,73 @@ async function initDB() {
 const bot = new Telegraf(process.env.BOT_TOKEN);
 
 // ClothOff API configuration
+// Обновите часть с конфигурацией API
 const clothOffApi = axios.create({
-    baseURL: 'https://api.clothoff.app/v1',
+    // Обратите внимание на точный URL из документации
+    baseURL: 'https://api.webhook.ml/v1',
     headers: {
         'Authorization': `Bearer ${process.env.CLOTHOFF_API_KEY}`,
         'Content-Type': 'application/json'
+    }
+});
+
+// Обновите обработчик изображений
+bot.on(message('photo'), async (ctx) => {
+    const userId = ctx.from.id;
+    const credits = await checkCredits(userId);
+
+    if (credits <= 0) {
+        return ctx.reply('У вас закончились кредиты.');
+    }
+
+    try {
+        // Get photo file from Telegram
+        const photo = ctx.message.photo[ctx.message.photo.length - 1];
+        const file = await ctx.telegram.getFile(photo.file_id);
+        if (!file.file_path) {
+            throw new Error('Could not get file path');
+        }
+
+        const inputImage = await axios.get(
+            `https://api.telegram.org/file/bot${process.env.BOT_TOKEN}/${file.file_path}`,
+            { responseType: 'arraybuffer' }
+        );
+
+        // Process image with API
+        const response = await clothOffApi.post('/process', {
+            // Структура запроса согласно документации
+            url: `https://api.telegram.org/file/bot${process.env.BOT_TOKEN}/${file.file_path}`,
+            // Добавьте другие параметры, если они требуются по документации
+            options: {
+                // Укажите нужные опции обработки
+            }
+        });
+
+        // Send processed image back
+        if (response.data && response.data.url) {
+            // Загружаем обработанное изображение
+            const processedImage = await axios.get(response.data.url, {
+                responseType: 'arraybuffer'
+            });
+            
+            await ctx.replyWithPhoto({ 
+                source: Buffer.from(processedImage.data) 
+            });
+            await useCredit(userId);
+        } else {
+            throw new Error('No processed image URL in response');
+        }
+    } catch (error) {
+        console.error('Error processing image:', error);
+        
+        // Более информативное сообщение об ошибке
+        let errorMessage = 'Произошла ошибка при обработке изображения.';
+        if (axios.isAxiosError(error)) {
+            errorMessage += ` (${error.message})`;
+            console.error('API Response:', error.response?.data);
+        }
+        
+        await ctx.reply(errorMessage);
     }
 });
 
