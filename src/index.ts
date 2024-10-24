@@ -14,6 +14,22 @@ const CLOTHOFF_API_KEY = process.env.CLOTHOFF_API_KEY || '4293b3bc213bba6a74011f
 const WEBHOOK_URL = process.env.WEBHOOK_URL || 'https://nudebot.railway.internal/webhook';
 const PORT = process.env.PORT || 3000;
 
+// Интерфейсы
+interface ApiResponse {
+    queue_time?: number;
+    queue_num?: number;
+    api_balance?: number;
+    id_gen?: string;
+    error?: string;
+}
+
+interface ProcessingResult {
+    queueTime?: number;
+    queueNum?: number;
+    apiBalance?: number;
+    idGen?: string;
+}
+
 // Инициализация базы данных
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
@@ -37,26 +53,6 @@ const apiClient = axios.create({
 // Express сервер для вебхуков
 const app = express();
 app.use(express.json());
-
-// Обработчик вебхуков
-app.post('/webhook', async (req, res) => {
-    try {
-        console.log('Получен webhook:', req.body);
-        const { task_id, result, error } = req.body;
-        
-        if (error) {
-            console.error('Ошибка в webhook:', error);
-        } else if (result) {
-            console.log('Обработка результата для задачи:', task_id);
-            // Здесь можно добавить логику обработки результата
-        }
-        
-        res.status(200).json({ success: true });
-    } catch (error) {
-        console.error('Ошибка обработки webhook:', error);
-        res.status(500).json({ error: 'Internal server error' });
-    }
-});
 
 // Создание таблиц в базе данных
 async function initDB() {
@@ -84,21 +80,22 @@ async function initDB() {
 }
 
 // Обработка изображения через API
-async function processImage(imageBuffer: Buffer, userId: number) {
+async function processImage(imageBuffer: Buffer, userId: number): Promise<ProcessingResult> {
     const formData = new FormData();
+    const id_gen = `user_${userId}_${Date.now()}`;
     
     formData.append('cloth', 'naked');
     formData.append('image', imageBuffer, {
         filename: 'image.jpg',
         contentType: 'image/jpeg'
     });
-    formData.append('id_gen', `user_${userId}_${Date.now()}`);
+    formData.append('id_gen', id_gen);
     formData.append('webhook', WEBHOOK_URL);
 
     try {
         console.log('Отправка запроса в API с полями:', {
             cloth: 'naked',
-            id_gen: `user_${userId}_${Date.now()}`,
+            id_gen,
             webhook: WEBHOOK_URL,
             hasImage: !!imageBuffer
         });
@@ -114,19 +111,29 @@ async function processImage(imageBuffer: Buffer, userId: number) {
         
         console.log('Ответ API:', response.data);
         
-        if (response.data.error) {
-            throw new Error(`API Error: ${response.data.error}`);
+        const apiResponse: ApiResponse = response.data;
+        
+        if (apiResponse.error) {
+            throw new Error(`API Error: ${apiResponse.error}`);
+        }
+
+        // Проверяем баланс API
+        if (apiResponse.api_balance === 0) {
+            throw new Error('Недостаточно баланса API');
         }
         
-        if (response.data.task_id) {
-            // Сохраняем task_id в базе данных
-            await pool.query(
-                'UPDATE users SET pending_task_id = $1 WHERE user_id = $2',
-                [response.data.task_id, userId]
-            );
-        }
+        // Сохраняем id_gen в базе данных
+        await pool.query(
+            'UPDATE users SET pending_task_id = $1 WHERE user_id = $2',
+            [apiResponse.id_gen, userId]
+        );
         
-        return response.data;
+        return {
+            queueTime: apiResponse.queue_time,
+            queueNum: apiResponse.queue_num,
+            apiBalance: apiResponse.api_balance,
+            idGen: apiResponse.id_gen
+        };
     } catch (error) {
         if (axios.isAxiosError(error) && error.response?.data) {
             console.error('API Error Response:', error.response.data);
@@ -200,6 +207,7 @@ bot.command('start', async (ctx) => {
 // Обработчик изображений
 bot.on(message('photo'), async (ctx) => {
     const userId = ctx.from.id;
+    let processingMsg;
     
     try {
         const credits = await checkCredits(userId);
@@ -208,7 +216,7 @@ bot.on(message('photo'), async (ctx) => {
             return ctx.reply('У вас закончились кредиты.');
         }
 
-        await ctx.reply('⏳ Обрабатываю изображение, пожалуйста, подождите...');
+        processingMsg = await ctx.reply('⏳ Обрабатываю изображение, пожалуйста, подождите...');
 
         const photo = ctx.message.photo[ctx.message.photo.length - 1];
         const file = await ctx.telegram.getFile(photo.file_id);
@@ -227,11 +235,22 @@ bot.on(message('photo'), async (ctx) => {
         console.log('Отправка изображения на обработку...');
         const result = await processImage(imageBuffer, userId);
 
-        if (result.task_id) {
-            await ctx.reply('✅ Изображение принято на обработку. Результат будет отправлен позже.');
+        if (result.idGen) {
             await useCredit(userId);
+            await ctx.reply(
+                '✅ Изображение принято на обработку:\n' +
+                `🕒 Время в очереди: ${result.queueTime} сек\n` +
+                `📊 Позиция в очереди: ${result.queueNum}\n` +
+                `🔄 ID задачи: ${result.idGen}\n\n` +
+                'Результат будет отправлен, когда обработка завершится.'
+            );
         } else {
-            throw new Error('Не получен task_id от API');
+            throw new Error('Не получен id_gen от API');
+        }
+
+        // Удаляем сообщение о процессе обработки
+        if (processingMsg) {
+            await ctx.telegram.deleteMessage(ctx.chat.id, processingMsg.message_id).catch(() => {});
         }
 
     } catch (error) {
@@ -239,10 +258,20 @@ bot.on(message('photo'), async (ctx) => {
         
         if (error instanceof Error) {
             console.error('Ошибка при обработке изображения:', error.message);
-            errorMessage += `\n${error.message}`;
+            
+            if (error.message.includes('Недостаточно баланса API')) {
+                errorMessage = '❌ К сожалению, сервис временно недоступен из-за исчерпания баланса API. Попробуйте позже.';
+            } else {
+                errorMessage += `\n${error.message}`;
+            }
         }
 
         await ctx.reply(errorMessage);
+
+        // Пытаемся удалить сообщение о процессе обработки в случае ошибки
+        if (processingMsg) {
+            await ctx.telegram.deleteMessage(ctx.chat.id, processingMsg.message_id).catch(() => {});
+        }
     }
 });
 
@@ -255,6 +284,55 @@ bot.command('credits', async (ctx) => {
     } catch (error) {
         console.error('Ошибка при проверке кредитов:', error);
         await ctx.reply('Произошла ошибка при проверке кредитов. Попробуйте позже.');
+    }
+});
+
+// Обработчик вебхуков
+app.post('/webhook', async (req, res) => {
+    try {
+        console.log('Получен webhook:', req.body);
+        const { id_gen, result, error } = req.body;
+        
+        if (error) {
+            console.error('Ошибка в webhook:', error);
+            return res.status(200).json({ success: false, error });
+        }
+
+        if (result) {
+            console.log('Обработка результата для задачи:', id_gen);
+            
+            // Находим пользователя по id_gen
+            const userQuery = await pool.query(
+                'SELECT user_id FROM users WHERE pending_task_id = $1',
+                [id_gen]
+            );
+            
+            if (userQuery.rows.length > 0) {
+                const userId = userQuery.rows[0].user_id;
+                
+                try {
+                    // Отправляем результат пользователю
+                    const imageBuffer = Buffer.from(result, 'base64');
+                    await bot.telegram.sendPhoto(userId, { source: imageBuffer });
+                    await bot.telegram.sendMessage(userId, '✨ Обработка изображения завершена!');
+                    
+                    // Очищаем pending_task_id
+                    await pool.query(
+                        'UPDATE users SET pending_task_id = NULL WHERE user_id = $1',
+                        [userId]
+                    );
+                } catch (sendError) {
+                    console.error('Ошибка при отправке результата пользователю:', sendError);
+                }
+            } else {
+                console.log('Пользователь не найден для задачи:', id_gen);
+            }
+        }
+        
+        res.status(200).json({ success: true });
+    } catch (error) {
+        console.error('Ошибка обработки webhook:', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 });
 
