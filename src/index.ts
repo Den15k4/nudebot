@@ -1,7 +1,7 @@
 import { Telegraf } from 'telegraf';
 import { message } from 'telegraf/filters';
 import axios from 'axios';
-import { createClient } from '@railway/postgress';
+import { Pool } from 'pg';
 import dotenv from 'dotenv';
 import fs from 'fs';
 import path from 'path';
@@ -9,18 +9,28 @@ import path from 'path';
 dotenv.config();
 
 // Database initialization
-const db = createClient();
+const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: {
+        rejectUnauthorized: false
+    }
+});
 
 // Create tables if not exists
 async function initDB() {
-    await db.query(`
-        CREATE TABLE IF NOT EXISTS users (
-            user_id BIGINT PRIMARY KEY,
-            username TEXT,
-            credits INT DEFAULT 1,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        );
-    `);
+    const client = await pool.connect();
+    try {
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS users (
+                user_id BIGINT PRIMARY KEY,
+                username TEXT,
+                credits INT DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+        `);
+    } finally {
+        client.release();
+    }
 }
 
 // Telegram bot initialization
@@ -37,7 +47,7 @@ const clothOffApi = axios.create({
 
 // Check user credits
 async function checkCredits(userId: number): Promise<number> {
-    const result = await db.query(
+    const result = await pool.query(
         'SELECT credits FROM users WHERE user_id = $1',
         [userId]
     );
@@ -46,7 +56,7 @@ async function checkCredits(userId: number): Promise<number> {
 
 // Decrease credits
 async function useCredit(userId: number) {
-    await db.query(
+    await pool.query(
         'UPDATE users SET credits = credits - 1 WHERE user_id = $1',
         [userId]
     );
@@ -54,7 +64,7 @@ async function useCredit(userId: number) {
 
 // Add new user
 async function addNewUser(userId: number, username: string) {
-    await db.query(
+    await pool.query(
         'INSERT INTO users (user_id, username, credits) VALUES ($1, $2, 1) ON CONFLICT (user_id) DO NOTHING',
         [userId, username]
     );
@@ -130,5 +140,9 @@ async function start() {
         console.error('Error starting application:', error);
     }
 }
+
+// Enable graceful stop
+process.once('SIGINT', () => bot.stop('SIGINT'));
+process.once('SIGTERM', () => bot.stop('SIGTERM'));
 
 start();
