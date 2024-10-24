@@ -1,24 +1,18 @@
 import { Telegraf } from 'telegraf';
 import { message } from 'telegraf/filters';
-import axios, { AxiosError } from 'axios';
+import axios from 'axios';
 import { Pool } from 'pg';
 import dotenv from 'dotenv';
 import FormData from 'form-data';
+import express from 'express';
 
 dotenv.config();
 
-// Проверка наличия необходимых переменных окружения
-if (!process.env.BOT_TOKEN) {
-    throw new Error('BOT_TOKEN не установлен в переменных окружения');
-}
-
-if (!process.env.DATABASE_URL) {
-    throw new Error('DATABASE_URL не установлен в переменных окружения');
-}
-
-if (!process.env.CLOTHOFF_API_KEY) {
-    throw new Error('CLOTHOFF_API_KEY не установлен в переменных окружения');
-}
+// Проверка переменных окружения
+const BOT_TOKEN = process.env.BOT_TOKEN || '7543266158:AAETR2eLuk2joRxh6w2IvPePUw2LZa8_56U';
+const CLOTHOFF_API_KEY = process.env.CLOTHOFF_API_KEY || '4293b3bc213bba6a74011fba8d4ad9bd460599d9';
+const WEBHOOK_URL = process.env.WEBHOOK_URL || 'https://nudebot.railway.internal/webhook';
+const PORT = process.env.PORT || 3000;
 
 // Инициализация базы данных
 const pool = new Pool({
@@ -29,14 +23,38 @@ const pool = new Pool({
 });
 
 // Инициализация бота
-const bot = new Telegraf(process.env.BOT_TOKEN);
+const bot = new Telegraf(BOT_TOKEN);
 
 // Инициализация API клиента
 const apiClient = axios.create({
     baseURL: 'https://public-api.clothoff.net',
     headers: {
         'accept': 'application/json',
-        'x-api-key': process.env.CLOTHOFF_API_KEY
+        'x-api-key': CLOTHOFF_API_KEY
+    }
+});
+
+// Express сервер для вебхуков
+const app = express();
+app.use(express.json());
+
+// Обработчик вебхуков
+app.post('/webhook', async (req, res) => {
+    try {
+        console.log('Получен webhook:', req.body);
+        const { task_id, result, error } = req.body;
+        
+        if (error) {
+            console.error('Ошибка в webhook:', error);
+        } else if (result) {
+            console.log('Обработка результата для задачи:', task_id);
+            // Здесь можно добавить логику обработки результата
+        }
+        
+        res.status(200).json({ success: true });
+    } catch (error) {
+        console.error('Ошибка обработки webhook:', error);
+        res.status(500).json({ error: 'Internal server error' });
     }
 });
 
@@ -50,15 +68,14 @@ async function initDB() {
                 username TEXT,
                 credits INT DEFAULT 1,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                last_used TIMESTAMP
+                last_used TIMESTAMP,
+                pending_task_id TEXT
             );
         `);
         console.log('База данных инициализирована успешно');
     } catch (error) {
         if (error instanceof Error) {
             console.error('Ошибка при инициализации базы данных:', error.message);
-        } else {
-            console.error('Неизвестная ошибка при инициализации базы данных');
         }
         throw error;
     } finally {
@@ -67,31 +84,46 @@ async function initDB() {
 }
 
 // Обработка изображения через API
-async function processImage(imageBuffer: Buffer) {
+async function processImage(imageBuffer: Buffer, userId: number) {
     const formData = new FormData();
+    
     formData.append('cloth', 'naked');
     formData.append('image', imageBuffer, {
         filename: 'image.jpg',
         contentType: 'image/jpeg'
     });
-    formData.append('id_gen', 'default'); // Добавляем обязательное поле id_gen
+    formData.append('id_gen', `user_${userId}_${Date.now()}`);
+    formData.append('webhook', WEBHOOK_URL);
 
     try {
+        console.log('Отправка запроса в API с полями:', {
+            cloth: 'naked',
+            id_gen: `user_${userId}_${Date.now()}`,
+            webhook: WEBHOOK_URL,
+            hasImage: !!imageBuffer
+        });
+
         const response = await apiClient.post('/undress', formData, {
             headers: {
                 ...formData.getHeaders(),
-                'x-api-key': process.env.CLOTHOFF_API_KEY,
-                'accept': 'application/json'
+                'x-api-key': CLOTHOFF_API_KEY
             },
             maxBodyLength: Infinity,
-            timeout: 60000 // 60 секунд таймаут
+            timeout: 120000
         });
         
-        // Добавим логирование для отладки
-        console.log('API Response:', response.data);
+        console.log('Ответ API:', response.data);
         
         if (response.data.error) {
             throw new Error(`API Error: ${response.data.error}`);
+        }
+        
+        if (response.data.task_id) {
+            // Сохраняем task_id в базе данных
+            await pool.query(
+                'UPDATE users SET pending_task_id = $1 WHERE user_id = $2',
+                [response.data.task_id, userId]
+            );
         }
         
         return response.data;
@@ -99,13 +131,8 @@ async function processImage(imageBuffer: Buffer) {
         if (axios.isAxiosError(error) && error.response?.data) {
             console.error('API Error Response:', error.response.data);
             throw new Error(`API Error: ${error.response.data.error || 'Unknown error'}`);
-        } else if (error instanceof Error) {
-            console.error('Request Error:', error.message);
-            throw error;
-        } else {
-            console.error('Unknown Error:', error);
-            throw new Error('Unknown error occurred');
         }
+        throw error;
     }
 }
 
@@ -118,11 +145,7 @@ async function checkCredits(userId: number): Promise<number> {
         );
         return result.rows[0]?.credits || 0;
     } catch (error) {
-        if (error instanceof Error) {
-            console.error('Ошибка при проверке кредитов:', error.message);
-        } else {
-            console.error('Неизвестная ошибка при проверке кредитов');
-        }
+        console.error('Ошибка при проверке кредитов:', error);
         throw error;
     }
 }
@@ -135,11 +158,7 @@ async function useCredit(userId: number) {
             [userId]
         );
     } catch (error) {
-        if (error instanceof Error) {
-            console.error('Ошибка при использовании кредита:', error.message);
-        } else {
-            console.error('Неизвестная ошибка при использовании кредита');
-        }
+        console.error('Ошибка при использовании кредита:', error);
         throw error;
     }
 }
@@ -152,11 +171,7 @@ async function addNewUser(userId: number, username: string | undefined) {
             [userId, username || 'anonymous']
         );
     } catch (error) {
-        if (error instanceof Error) {
-            console.error('Ошибка при добавлении пользователя:', error.message);
-        } else {
-            console.error('Неизвестная ошибка при добавлении пользователя');
-        }
+        console.error('Ошибка при добавлении пользователя:', error);
         throw error;
     }
 }
@@ -177,11 +192,7 @@ bot.command('start', async (ctx) => {
             '/credits - проверить количество кредитов'
         );
     } catch (error) {
-        if (error instanceof Error) {
-            console.error('Ошибка в команде start:', error.message);
-        } else {
-            console.error('Неизвестная ошибка в команде start');
-        }
+        console.error('Ошибка в команде start:', error);
         await ctx.reply('Произошла ошибка при запуске бота. Попробуйте позже.');
     }
 });
@@ -197,7 +208,7 @@ bot.on(message('photo'), async (ctx) => {
             return ctx.reply('У вас закончились кредиты.');
         }
 
-        const processingMsg = await ctx.reply('⏳ Обрабатываю изображение, пожалуйста, подождите...');
+        await ctx.reply('⏳ Обрабатываю изображение, пожалуйста, подождите...');
 
         const photo = ctx.message.photo[ctx.message.photo.length - 1];
         const file = await ctx.telegram.getFile(photo.file_id);
@@ -207,48 +218,30 @@ bot.on(message('photo'), async (ctx) => {
         }
 
         const imageResponse = await axios.get(
-            `https://api.telegram.org/file/bot${process.env.BOT_TOKEN}/${file.file_path}`,
+            `https://api.telegram.org/file/bot${BOT_TOKEN}/${file.file_path}`,
             { responseType: 'arraybuffer' }
         );
 
         const imageBuffer = Buffer.from(imageResponse.data);
 
         console.log('Отправка изображения на обработку...');
-        const result = await processImage(imageBuffer);
+        const result = await processImage(imageBuffer, userId);
 
-        if (result && result.result) {
-            const processedImageBuffer = Buffer.from(result.result, 'base64');
-            await ctx.replyWithPhoto({ source: processedImageBuffer });
+        if (result.task_id) {
+            await ctx.reply('✅ Изображение принято на обработку. Результат будет отправлен позже.');
             await useCredit(userId);
-            await ctx.reply('✅ Обработка завершена успешно!');
-        } else if (result && result.url) {
-            const processedImage = await axios.get(result.url, { responseType: 'arraybuffer' });
-            await ctx.replyWithPhoto({ source: Buffer.from(processedImage.data) });
-            await useCredit(userId);
-            await ctx.reply('✅ Обработка завершена успешно!');
         } else {
-            throw new Error('Неверный формат ответа API');
+            throw new Error('Не получен task_id от API');
         }
-
-        await ctx.telegram.deleteMessage(ctx.chat.id, processingMsg.message_id);
 
     } catch (error) {
         let errorMessage = '❌ Произошла ошибка при обработке изображения.';
         
-        if (error instanceof AxiosError) {
-            if (error.response) {
-                console.error('API Error Response:', error.response.data);
-                errorMessage += '\nОшибка сервера обработки. Попробуйте позже.';
-            } else if (error.request) {
-                errorMessage += '\nСервер не отвечает. Попробуйте позже.';
-            } else {
-                errorMessage += `\n${error.message}`;
-            }
-        } else if (error instanceof Error) {
+        if (error instanceof Error) {
+            console.error('Ошибка при обработке изображения:', error.message);
             errorMessage += `\n${error.message}`;
         }
 
-        console.error('Ошибка при обработке изображения:', error);
         await ctx.reply(errorMessage);
     }
 });
@@ -260,28 +253,27 @@ bot.command('credits', async (ctx) => {
         const credits = await checkCredits(userId);
         await ctx.reply(`💳 У вас осталось кредитов: ${credits}`);
     } catch (error) {
-        if (error instanceof Error) {
-            console.error('Ошибка при проверке кредитов:', error.message);
-        } else {
-            console.error('Неизвестная ошибка при проверке кредитов');
-        }
+        console.error('Ошибка при проверке кредитов:', error);
         await ctx.reply('Произошла ошибка при проверке кредитов. Попробуйте позже.');
     }
 });
 
-// Запуск бота
+// Запуск приложения
 async function start() {
     try {
         await initDB();
         console.log('База данных инициализирована');
+        
+        // Запуск Express сервера
+        app.listen(PORT, () => {
+            console.log(`Webhook сервер запущен на порту ${PORT}`);
+        });
+
+        // Запуск бота
         await bot.launch();
         console.log('Бот запущен');
     } catch (error) {
-        if (error instanceof Error) {
-            console.error('Ошибка при запуске приложения:', error.message);
-        } else {
-            console.error('Неизвестная ошибка при запуске приложения');
-        }
+        console.error('Ошибка при запуске приложения:', error);
         process.exit(1);
     }
 }
