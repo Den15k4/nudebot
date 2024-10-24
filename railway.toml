@@ -1,6 +1,6 @@
 [build]
 builder = "DOCKERFILE"
-dockerfilePath = "Dockerfile"
+dockerfilePath = "dockerfile"
 
 [deploy]
 startCommand = "alembic upgrade head && python src/main.py"
