@@ -8,6 +8,17 @@ import path from 'path';
 
 dotenv.config();
 
+// Check required environment variables
+if (!process.env.BOT_TOKEN) {
+    throw new Error('BOT_TOKEN must be provided!');
+}
+if (!process.env.CLOTHOFF_API_KEY) {
+    throw new Error('CLOTHOFF_API_KEY must be provided!');
+}
+if (!process.env.DATABASE_URL) {
+    throw new Error('DATABASE_URL must be provided!');
+}
+
 // Database initialization
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
@@ -63,10 +74,10 @@ async function useCredit(userId: number) {
 }
 
 // Add new user
-async function addNewUser(userId: number, username: string) {
+async function addNewUser(userId: number, username: string | undefined) {
     await pool.query(
         'INSERT INTO users (user_id, username, credits) VALUES ($1, $2, 1) ON CONFLICT (user_id) DO NOTHING',
-        [userId, username]
+        [userId, username || 'anonymous']
     );
 }
 
@@ -96,10 +107,12 @@ bot.on(message('photo'), async (ctx) => {
         // Get photo file from Telegram
         const photo = ctx.message.photo[ctx.message.photo.length - 1];
         const file = await ctx.telegram.getFile(photo.file_id);
-        const filePath = file.file_path;
+        if (!file.file_path) {
+            throw new Error('Could not get file path');
+        }
 
         const inputImage = await axios.get(
-            `https://api.telegram.org/file/bot${process.env.BOT_TOKEN}/${filePath}`,
+            `https://api.telegram.org/file/bot${process.env.BOT_TOKEN}/${file.file_path}`,
             { responseType: 'arraybuffer' }
         );
 
@@ -138,6 +151,7 @@ async function start() {
         console.log('Bot started');
     } catch (error) {
         console.error('Error starting application:', error);
+        process.exit(1);
     }
 }
 
