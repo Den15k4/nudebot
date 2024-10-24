@@ -1,11 +1,9 @@
 import { Telegraf } from 'telegraf';
 import { message } from 'telegraf/filters';
-import axios from 'axios';
+import axios, { AxiosError } from 'axios';
 import { Pool } from 'pg';
 import dotenv from 'dotenv';
 import FormData from 'form-data';
-import fs from 'fs';
-import path from 'path';
 
 dotenv.config();
 
@@ -57,7 +55,11 @@ async function initDB() {
         `);
         console.log('База данных инициализирована успешно');
     } catch (error) {
-        console.error('Ошибка при инициализации базы данных:', error);
+        if (error instanceof Error) {
+            console.error('Ошибка при инициализации базы данных:', error.message);
+        } else {
+            console.error('Неизвестная ошибка при инициализации базы данных');
+        }
         throw error;
     } finally {
         client.release();
@@ -85,7 +87,11 @@ async function processImage(imageBuffer: Buffer) {
         });
         return response.data;
     } catch (error) {
-        console.error('Ошибка API:', error.response?.data || error.message);
+        if (error instanceof Error) {
+            console.error('Ошибка API:', error.message);
+        } else {
+            console.error('Неизвестная ошибка API');
+        }
         throw error;
     }
 }
@@ -99,7 +105,11 @@ async function checkCredits(userId: number): Promise<number> {
         );
         return result.rows[0]?.credits || 0;
     } catch (error) {
-        console.error('Ошибка при проверке кредитов:', error);
+        if (error instanceof Error) {
+            console.error('Ошибка при проверке кредитов:', error.message);
+        } else {
+            console.error('Неизвестная ошибка при проверке кредитов');
+        }
         throw error;
     }
 }
@@ -112,7 +122,11 @@ async function useCredit(userId: number) {
             [userId]
         );
     } catch (error) {
-        console.error('Ошибка при использовании кредита:', error);
+        if (error instanceof Error) {
+            console.error('Ошибка при использовании кредита:', error.message);
+        } else {
+            console.error('Неизвестная ошибка при использовании кредита');
+        }
         throw error;
     }
 }
@@ -125,7 +139,11 @@ async function addNewUser(userId: number, username: string | undefined) {
             [userId, username || 'anonymous']
         );
     } catch (error) {
-        console.error('Ошибка при добавлении пользователя:', error);
+        if (error instanceof Error) {
+            console.error('Ошибка при добавлении пользователя:', error.message);
+        } else {
+            console.error('Неизвестная ошибка при добавлении пользователя');
+        }
         throw error;
     }
 }
@@ -146,7 +164,11 @@ bot.command('start', async (ctx) => {
             '/credits - проверить количество кредитов'
         );
     } catch (error) {
-        console.error('Ошибка в команде start:', error);
+        if (error instanceof Error) {
+            console.error('Ошибка в команде start:', error.message);
+        } else {
+            console.error('Неизвестная ошибка в команде start');
+        }
         await ctx.reply('Произошла ошибка при запуске бота. Попробуйте позже.');
     }
 });
@@ -162,10 +184,8 @@ bot.on(message('photo'), async (ctx) => {
             return ctx.reply('У вас закончились кредиты.');
         }
 
-        // Отправляем сообщение о начале обработки
         const processingMsg = await ctx.reply('⏳ Обрабатываю изображение, пожалуйста, подождите...');
 
-        // Получаем файл фото
         const photo = ctx.message.photo[ctx.message.photo.length - 1];
         const file = await ctx.telegram.getFile(photo.file_id);
         
@@ -173,7 +193,6 @@ bot.on(message('photo'), async (ctx) => {
             throw new Error('Не удалось получить путь к файлу');
         }
 
-        // Загружаем изображение
         const imageResponse = await axios.get(
             `https://api.telegram.org/file/bot${process.env.BOT_TOKEN}/${file.file_path}`,
             { responseType: 'arraybuffer' }
@@ -181,11 +200,9 @@ bot.on(message('photo'), async (ctx) => {
 
         const imageBuffer = Buffer.from(imageResponse.data);
 
-        // Обрабатываем изображение
         console.log('Отправка изображения на обработку...');
         const result = await processImage(imageBuffer);
 
-        // Обрабатываем результат
         if (result && result.result) {
             const processedImageBuffer = Buffer.from(result.result, 'base64');
             await ctx.replyWithPhoto({ source: processedImageBuffer });
@@ -200,15 +217,12 @@ bot.on(message('photo'), async (ctx) => {
             throw new Error('Неверный формат ответа API');
         }
 
-        // Удаляем сообщение о обработке
         await ctx.telegram.deleteMessage(ctx.chat.id, processingMsg.message_id);
 
     } catch (error) {
-        console.error('Ошибка при обработке изображения:', error);
-
         let errorMessage = '❌ Произошла ошибка при обработке изображения.';
         
-        if (axios.isAxiosError(error)) {
+        if (error instanceof AxiosError) {
             if (error.response) {
                 console.error('API Error Response:', error.response.data);
                 errorMessage += '\nОшибка сервера обработки. Попробуйте позже.';
@@ -217,8 +231,11 @@ bot.on(message('photo'), async (ctx) => {
             } else {
                 errorMessage += `\n${error.message}`;
             }
+        } else if (error instanceof Error) {
+            errorMessage += `\n${error.message}`;
         }
 
+        console.error('Ошибка при обработке изображения:', error);
         await ctx.reply(errorMessage);
     }
 });
@@ -230,15 +247,13 @@ bot.command('credits', async (ctx) => {
         const credits = await checkCredits(userId);
         await ctx.reply(`💳 У вас осталось кредитов: ${credits}`);
     } catch (error) {
-        console.error('Ошибка при проверке кредитов:', error);
+        if (error instanceof Error) {
+            console.error('Ошибка при проверке кредитов:', error.message);
+        } else {
+            console.error('Неизвестная ошибка при проверке кредитов');
+        }
         await ctx.reply('Произошла ошибка при проверке кредитов. Попробуйте позже.');
     }
-});
-
-// Обработка ошибок
-bot.catch((err: any, ctx) => {
-    console.error('Ошибка бота:', err);
-    ctx.reply('Произошла ошибка в работе бота. Пожалуйста, попробуйте позже.');
 });
 
 // Запуск бота
@@ -249,7 +264,11 @@ async function start() {
         await bot.launch();
         console.log('Бот запущен');
     } catch (error) {
-        console.error('Ошибка при запуске приложения:', error);
+        if (error instanceof Error) {
+            console.error('Ошибка при запуске приложения:', error.message);
+        } else {
+            console.error('Неизвестная ошибка при запуске приложения');
+        }
         process.exit(1);
     }
 }
@@ -264,5 +283,4 @@ process.once('SIGTERM', () => {
     pool.end();
 });
 
-// Запускаем бота
 start();
