@@ -35,6 +35,15 @@ interface ProcessingResult {
     idGen?: string;
 }
 
+interface WebhookBody {
+    id_gen?: string;
+    status?: string;
+    img_message?: string;
+    img_message_2?: string;
+    result?: string;
+    error?: string;
+}
+
 // Инициализация базы данных
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
@@ -104,9 +113,8 @@ async function initDB() {
 }
 
 // Функция проверки возраста
-async function isAdultContent(imageBuffer: Buffer): Promise<boolean> {
+async function isAdultContent(): Promise<boolean> {
     try {
-        // В будущем здесь может быть интеграция с API для определения возраста
         return true;
     } catch (error) {
         console.error('Ошибка при проверке содержимого:', error);
@@ -192,7 +200,7 @@ async function checkCredits(userId: number): Promise<number> {
     }
 }
 
-async function useCredit(userId: number) {
+async function useCredit(userId: number): Promise<void> {
     try {
         await pool.query(
             'UPDATE users SET credits = credits - 1, last_used = CURRENT_TIMESTAMP WHERE user_id = $1',
@@ -204,7 +212,7 @@ async function useCredit(userId: number) {
     }
 }
 
-async function returnCredit(userId: number) {
+async function returnCredit(userId: number): Promise<void> {
     try {
         await pool.query(
             'UPDATE users SET credits = credits + 1 WHERE user_id = $1',
@@ -216,7 +224,7 @@ async function returnCredit(userId: number) {
     }
 }
 
-async function addNewUser(userId: number, username: string | undefined) {
+async function addNewUser(userId: number, username: string | undefined): Promise<void> {
     try {
         await pool.query(
             'INSERT INTO users (user_id, username, credits) VALUES ($1, $2, 1) ON CONFLICT (user_id) DO NOTHING',
@@ -284,7 +292,7 @@ bot.on(message('photo'), async (ctx) => {
 
         const imageBuffer = Buffer.from(imageResponse.data);
 
-        if (!await isAdultContent(imageBuffer)) {
+        if (!await isAdultContent()) {
             throw new Error('AGE_RESTRICTION');
         }
 
@@ -358,25 +366,26 @@ app.post('/webhook', upload.any(), async (req, res) => {
         console.log('Body:', req.body);
         console.log('Files:', req.files);
 
-        const { id_gen, status, img_message, img_message_2, result } = req.body;
+        const body = req.body as WebhookBody;
+        const files = req.files as Express.Multer.File[] || [];
 
-        if (status === '500' || img_message || img_message_2) {
-            console.log(`Ошибка обработки изображения: ${img_message || img_message_2}`);
+        if (body.status === '500' || body.img_message || body.img_message_2) {
+            console.log(`Ошибка обработки изображения: ${body.img_message || body.img_message_2}`);
             
             const userQuery = await pool.query(
                 'SELECT user_id FROM users WHERE pending_task_id = $1',
-                [id_gen]
+                [body.id_gen]
             );
 
             if (userQuery.rows.length > 0) {
                 const userId = userQuery.rows[0].user_id;
                 let errorMessage = '❌ Не удалось обработать изображение:\n\n';
 
-                if (img_message?.includes('Age is too young') || img_message_2?.includes('Age is too young')) {
+                if (body.img_message?.includes('Age is too young') || body.img_message_2?.includes('Age is too young')) {
                     errorMessage += '🔞 На изображении обнаружен человек младше 18 лет.\n' +
                                   'Обработка таких изображений запрещена.';
                 } else {
-                    errorMessage += img_message || img_message_2 || 'Неизвестная ошибка';
+                    errorMessage += body.img_message || body.img_message_2 || 'Неизвестная ошибка';
                 }
 
                 try {
@@ -393,18 +402,18 @@ app.post('/webhook', upload.any(), async (req, res) => {
                 }
             }
 
-            return res.status(200).json({ success: true, error: img_message || img_message_2 });
+            return res.status(200).json({ success: true, error: body.img_message || body.img_message_2 });
         }
 
         // Проверяем наличие результата
-        if (!result && (!req.files || req.files.length === 0)) {
+        if (!body.result && files.length === 0) {
             console.log('Нет результата в запросе');
             return res.status(200).json({ success: true });
         }
 
         const userQuery = await pool.query(
             'SELECT user_id FROM users WHERE pending_task_id = $1',
-            [id_gen]
+            [body.id_gen]
         );
 
         if (userQuery.rows.length > 0) {
@@ -413,11 +422,11 @@ app.post('/webhook', upload.any(), async (req, res) => {
             try {
                 console.log('Отправка результата пользователю:', userId);
                 
-                let imageBuffer;
-                if (result) {
-                    imageBuffer = Buffer.from(result, 'base64');
-                } else if (req.files && req.files.length > 0) {
-                    imageBuffer = (req.files[0] as Express.Multer.File).buffer;
+                let imageBuffer: Buffer | undefined;
+                if (body.result) {
+                    imageBuffer = Buffer.from(body.result, 'base64');
+                } else if (files.length > 0) {
+                    imageBuffer = files[0].buffer;
                 }
 
                 if (imageBuffer) {
@@ -434,7 +443,7 @@ app.post('/webhook', upload.any(), async (req, res) => {
                 console.error('Ошибка при отправке результата пользователю:', sendError);
             }
         } else {
-            console.log('Пользователь не найден для задачи:', id_gen);
+            console.log('Пользователь не найден для задачи:', body.id_gen);
         }
 
         res.status(200).json({ success: true });
