@@ -64,25 +64,38 @@ async function initDB() {
                 user_id BIGINT PRIMARY KEY,
                 username TEXT,
                 credits INT DEFAULT 1,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                last_used TIMESTAMP
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
         `);
 
-        // Проверяем существование колонки pending_task_id
-        const columnCheck = await client.query(`
-            SELECT column_name 
-            FROM information_schema.columns 
-            WHERE table_name = 'users' AND column_name = 'pending_task_id';
-        `);
+        // Проверяем и добавляем необходимые колонки
+        const columns = [
+            {
+                name: 'pending_task_id',
+                type: 'TEXT',
+                default: null
+            },
+            {
+                name: 'last_used',
+                type: 'TIMESTAMP',
+                default: null
+            }
+        ];
 
-        // Если колонки нет, добавляем её
-        if (columnCheck.rows.length === 0) {
-            await client.query(`
-                ALTER TABLE users 
-                ADD COLUMN pending_task_id TEXT;
-            `);
-            console.log('Колонка pending_task_id добавлена');
+        for (const column of columns) {
+            const columnCheck = await client.query(`
+                SELECT column_name 
+                FROM information_schema.columns 
+                WHERE table_name = 'users' AND column_name = $1;
+            `, [column.name]);
+
+            if (columnCheck.rows.length === 0) {
+                await client.query(`
+                    ALTER TABLE users 
+                    ADD COLUMN ${column.name} ${column.type} DEFAULT ${column.default};
+                `);
+                console.log(`Колонка ${column.name} добавлена`);
+            }
         }
 
         console.log('База данных инициализирована успешно');
@@ -93,6 +106,31 @@ async function initDB() {
         throw error;
     } finally {
         client.release();
+    }
+}
+
+// Также обновим функцию useCredit, чтобы она была более устойчивой к ошибкам
+async function useCredit(userId: number) {
+    try {
+        await pool.query(
+            'UPDATE users SET credits = credits - 1 WHERE user_id = $1',
+            [userId]
+        );
+        
+        // Пробуем обновить last_used в отдельном запросе
+        try {
+            await pool.query(
+                'UPDATE users SET last_used = CURRENT_TIMESTAMP WHERE user_id = $1',
+                [userId]
+            );
+        } catch (error) {
+            // Игнорируем ошибку обновления last_used,
+            // так как это не критично для основной функциональности
+            console.warn('Не удалось обновить last_used:', error);
+        }
+    } catch (error) {
+        console.error('Ошибка при использовании кредита:', error);
+        throw new Error('Не удалось использовать кредит');
     }
 }
 
