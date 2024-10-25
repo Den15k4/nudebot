@@ -1,3 +1,4 @@
+```typescript
 import { Telegraf } from 'telegraf';
 import { message } from 'telegraf/filters';
 import axios from 'axios';
@@ -5,6 +6,7 @@ import { Pool } from 'pg';
 import dotenv from 'dotenv';
 import FormData from 'form-data';
 import express from 'express';
+import multer from 'multer';
 
 dotenv.config();
 
@@ -52,6 +54,25 @@ const apiClient = axios.create({
 
 // Express сервер для вебхуков
 const app = express();
+
+// Настройка multer для обработки multipart/form-data
+const upload = multer({
+    storage: multer.memoryStorage(),
+    limits: {
+        fileSize: 10 * 1024 * 1024 // 10MB лимит
+    }
+});
+
+// Middleware для логирования всех запросов
+app.use((req, res, next) => {
+    console.log('Входящий запрос:', {
+        method: req.method,
+        path: req.path,
+        headers: req.headers
+    });
+    next();
+});
+
 app.use(express.json());
 
 // Создание таблиц в базе данных
@@ -184,7 +205,7 @@ async function addNewUser(userId: number, username: string | undefined) {
     }
 }
 
-// Команда /start
+// Telegram bot handlers
 bot.command('start', async (ctx) => {
     try {
         const userId = ctx.from.id;
@@ -205,7 +226,6 @@ bot.command('start', async (ctx) => {
     }
 });
 
-// Обработчик изображений
 bot.on(message('photo'), async (ctx) => {
     const userId = ctx.from.id;
     let processingMsg;
@@ -275,7 +295,6 @@ bot.on(message('photo'), async (ctx) => {
     }
 });
 
-// Команда /credits
 bot.command('credits', async (ctx) => {
     try {
         const userId = ctx.from.id;
@@ -287,98 +306,135 @@ bot.command('credits', async (ctx) => {
     }
 });
 
-// Тестовый endpoint
+// Express endpoints
 app.get('/health', (req, res) => {
     res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// Webhook обработчик
-app.post('/webhook', async (req, res) => {
+// Webhook handler
+app.post('/webhook', upload.any(), async (req, res) => {
     try {
         console.log('Получен webhook запрос');
         console.log('Headers:', req.headers);
-        console.log('Body:', JSON.stringify(req.body, null, 2));
-        
-        const { id_gen, result, error } = req.body;
-        
-        if (error) {
-            console.error('Ошибка в webhook:', error);
-            return res.status(200).json({ success: false, error });
+        console.log('Body:', req.body);
+        console.log('Files:', req.files);
+
+        // Проверяем наличие файлов
+        const files = req.files as Express.Multer.File[];
+        if (!files || files.length === 0) {
+            console.log('Нет файлов в запросе. Проверяем тело запроса...');
+            if (req.body && req.body.result) {
+                // Обработка в случае, если результат пришел в теле запроса
+                const { id_gen, result } = req.body;
+                if (!id_gen) {
+                    console.error('Получен webhook без id_gen');
+                    return res.status(400).json({ success: false, error: 'No id_gen provided' });
+                }
+
+                console.log('Обработка результата для задачи:', id_gen);
+
+                const userQuery = await pool.query(
+                    'SELECT user_id FROM users WHERE pending_task_id = $1',
+                    [id_gen]
+                );
+
+                if (userQuery.rows.length > 0) {
+                    const userId = userQuery.rows[0].user_id;
+                    try {
+                        console.log('Отправка результата пользователю:', userId);
+                        const imageBuffer = Buffer.from(result, 'base64');
+                        await bot.telegram.sendPhoto(userId, { source: imageBuffer });
+                        await bot.telegram.sendMessage(userId, '✨ Обработка изображения завершена!');
+
+                        await pool.query(
+                            'UPDATE users SET pending_task_id = NULL WHERE user_id = $1',
+                            [userId]
+                        );
+                        console.log('Результат успешно отправлен пользователю');
+                    } catch (sendError) {
+                        console.error('Ошибка при отправке результата пользователю:', sendError);
+                    }
+                }
+            } else {
+                console.log('Пустой webhook запрос');
+            }
+            return res.status(200).json({ success: true });
         }
 
+        // Получаем id_gen из тела запроса или из имени файла
+        const id_gen = req.body.id_gen || files[0].originalname.split('.')[0];
+        
         if (!id_gen) {
             console.error('Получен webhook без id_gen');
             return res.status(400).json({ success: false, error: 'No id_gen provided' });
         }
 
-        if (result) {
-            console.log('Начинаем обработку результата для задачи:', id_gen);
-            
-            const userQuery = await pool.query(
-                'SELECT user_id FROM users WHERE pending_task_id = $1',
-                [id_gen]
-            );
-            
-            console.log('Результат запроса пользователя:', userQuery.rows);
-            
-            if (userQuery.rows.length > 0) {
-                const userId = userQuery.rows[0].user_id;
-                
-                try {
-                    console.log('Отправка результата пользователю:', userId);
-                    const imageBuffer = Buffer.from(result, 'base64');
-                    await bot.telegram.sendPhoto(userId, { source: imageBuffer });
-                    await bot.telegram.sendMessage(userId, '✨ Обработка изображения завершена!');
-                    
-                    await pool.query(
-                        'UPDATE users SET pending_task_id = NULL WHERE user_id = $1',
-                        [userId]
-                    );
-                    console.log('Результат успешно отправлен пользователю');
-                } catch (sendError) {
-                    console.error('Ошибка при отправке результата пользователю:', sendError);
-                }
-            } else {
-                console.log('Пользователь не найден для задачи:', id_gen);
+        console.log('Обработка результата для задачи:', id_gen);
+
+        const userQuery = await pool.query(
+            'SELECT user_id FROM users WHERE pending_task_id = $1',
+            [id_gen]
+        );
+
+        console.log('Результат запроса пользователя:', userQuery.rows);
+
+        if (userQuery.rows.length > 0) {
+            const userId = userQuery.rows[0].user_id;
+
+            try {
+                console.log('Отправка результата пользователю:', userId);
+                const imageBuffer = files[0].buffer;
+                await bot.telegram.sendPhoto(userId, { source: imageBuffer });
+                await bot.telegram.sendMessage(userId, '✨ Обработка изображения завершена!');
+
+                await pool.query(
+                    'UPDATE users SET pending_task_id = NULL WHERE user_id = $1',
+                    [userId]
+                );
+                console.log('Результат успешно отправлен пользователю');
+            } catch (sendError) {
+                console.error('Ошибка при отправке результата пользователю:', sendError);
             }
         } else {
-            console.log('Получен webhook без результата');
+            console.log('Пользователь не найден для задачи:', id_gen);
         }
-        
+
         res.status(200).json({ success: true });
     } catch (error) {
         console.error('Ошибка обработки webhook:', error);
         res.status(500).json({ error: 'Internal server error' });
     }
-});
-
-// Запуск приложения
-async function start() {
+ });
+ 
+ // Запуск приложения
+ async function start() {
     try {
         await initDB();
         console.log('База данных инициализирована');
         
+        // Запуск Express сервера
         app.listen(PORT, '0.0.0.0', () => {
             console.log(`Webhook сервер запущен на порту ${PORT}`);
         });
-
+ 
+        // Запуск бота
         await bot.launch();
         console.log('Бот запущен');
     } catch (error) {
         console.error('Ошибка при запуске приложения:', error);
         process.exit(1);
     }
-}
-
-// Graceful shutdown
-process.once('SIGINT', () => {
+ }
+ 
+ // Graceful shutdown
+ process.once('SIGINT', () => {
     bot.stop('SIGINT');
     pool.end();
-});
-process.once('SIGTERM', () => {
+ });
+ process.once('SIGTERM', () => {
     bot.stop('SIGTERM');
     pool.end();
-});
-
-// Запускаем приложение
-start();
+ });
+ 
+ // Запускаем приложение
+ start();
