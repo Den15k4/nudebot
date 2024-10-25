@@ -1,4 +1,3 @@
-// src/index.ts
 import { Telegraf } from 'telegraf';
 import { message } from 'telegraf/filters';
 import axios from 'axios';
@@ -23,6 +22,10 @@ interface ApiResponse {
     api_balance?: number;
     id_gen?: string;
     error?: string;
+    status?: string;
+    img_message?: string;
+    img_message_2?: string;
+    age?: string;
 }
 
 interface ProcessingResult {
@@ -100,6 +103,17 @@ async function initDB() {
     }
 }
 
+// Функция проверки возраста
+async function isAdultContent(imageBuffer: Buffer): Promise<boolean> {
+    try {
+        // В будущем здесь может быть интеграция с API для определения возраста
+        return true;
+    } catch (error) {
+        console.error('Ошибка при проверке содержимого:', error);
+        return false;
+    }
+}
+
 // Обработка изображения через API
 async function processImage(imageBuffer: Buffer, userId: number): Promise<ProcessingResult> {
     const formData = new FormData();
@@ -164,7 +178,6 @@ async function processImage(imageBuffer: Buffer, userId: number): Promise<Proces
         throw error;
     }
 }
-
 // Функции работы с пользователями
 async function checkCredits(userId: number): Promise<number> {
     try {
@@ -187,6 +200,18 @@ async function useCredit(userId: number) {
         );
     } catch (error) {
         console.error('Ошибка при использовании кредита:', error);
+        throw error;
+    }
+}
+
+async function returnCredit(userId: number) {
+    try {
+        await pool.query(
+            'UPDATE users SET credits = credits + 1 WHERE user_id = $1',
+            [userId]
+        );
+    } catch (error) {
+        console.error('Ошибка при возврате кредита:', error);
         throw error;
     }
 }
@@ -235,6 +260,14 @@ bot.on(message('photo'), async (ctx) => {
             return ctx.reply('У вас закончились кредиты.');
         }
 
+        await ctx.reply(
+            '⚠️ Важные правила:\n\n' +
+            '1. Изображение должно содержать только людей старше 18 лет\n' +
+            '2. Убедитесь, что на фото чётко видно лицо\n' +
+            '3. Изображение должно быть хорошего качества\n\n' +
+            '⏳ Начинаю обработку...'
+        );
+
         processingMsg = await ctx.reply('⏳ Обрабатываю изображение, пожалуйста, подождите...');
 
         const photo = ctx.message.photo[ctx.message.photo.length - 1];
@@ -250,6 +283,10 @@ bot.on(message('photo'), async (ctx) => {
         );
 
         const imageBuffer = Buffer.from(imageResponse.data);
+
+        if (!await isAdultContent(imageBuffer)) {
+            throw new Error('AGE_RESTRICTION');
+        }
 
         console.log('Отправка изображения на обработку...');
         const result = await processImage(imageBuffer, userId);
@@ -275,7 +312,11 @@ bot.on(message('photo'), async (ctx) => {
         if (error instanceof Error) {
             console.error('Ошибка при обработке изображения:', error.message);
             
-            if (error.message === 'INSUFFICIENT_BALANCE') {
+            if (error.message === 'AGE_RESTRICTION') {
+                errorMessage = '🔞 Обработка запрещена:\n\n' +
+                    'Изображение не прошло проверку возрастных ограничений. ' +
+                    'Пожалуйста, убедитесь, что на фото только люди старше 18 лет.';
+            } else if (error.message === 'INSUFFICIENT_BALANCE') {
                 errorMessage = '⚠️ Сервис временно недоступен\n\n' +
                     'К сожалению, у сервиса закончился баланс API. ' +
                     'Пожалуйста, попробуйте позже или свяжитесь с администратором бота.\n\n' +
@@ -317,71 +358,72 @@ app.post('/webhook', upload.any(), async (req, res) => {
         console.log('Body:', req.body);
         console.log('Files:', req.files);
 
-        // Проверяем наличие файлов
-        const files = req.files as Express.Multer.File[];
-        if (!files || files.length === 0) {
-            console.log('Нет файлов в запросе. Проверяем тело запроса...');
-            if (req.body && req.body.result) {
-                // Обработка в случае, если результат пришел в теле запроса
-                const { id_gen, result } = req.body;
-                if (!id_gen) {
-                    console.error('Получен webhook без id_gen');
-                    return res.status(400).json({ success: false, error: 'No id_gen provided' });
+        const { id_gen, status, img_message, img_message_2, result } = req.body;
+
+        if (status === '500' || img_message || img_message_2) {
+            console.log(`Ошибка обработки изображения: ${img_message || img_message_2}`);
+            
+            const userQuery = await pool.query(
+                'SELECT user_id FROM users WHERE pending_task_id = $1',
+                [id_gen]
+            );
+
+            if (userQuery.rows.length > 0) {
+                const userId = userQuery.rows[0].user_id;
+                let errorMessage = '❌ Не удалось обработать изображение:\n\n';
+
+                if (img_message?.includes('Age is too young') || img_message_2?.includes('Age is too young')) {
+                    errorMessage += '🔞 На изображении обнаружен человек младше 18 лет.\n' +
+                                  'Обработка таких изображений запрещена.';
+                } else {
+                    errorMessage += img_message || img_message_2 || 'Неизвестная ошибка';
                 }
 
-                console.log('Обработка результата для задачи:', id_gen);
-
-                const userQuery = await pool.query(
-                    'SELECT user_id FROM users WHERE pending_task_id = $1',
-                    [id_gen]
-                );
-
-                if (userQuery.rows.length > 0) {
-                    const userId = userQuery.rows[0].user_id;
-                    try {
-                        console.log('Отправка результата пользователю:', userId);
-                        const imageBuffer = Buffer.from(result, 'base64');
-                        await bot.telegram.sendPhoto(userId, { source: imageBuffer });
-                        await bot.telegram.sendMessage(userId, '✨ Обработка изображения завершена!');
-
-                        await pool.query(
-                            'UPDATE users SET pending_task_id = NULL WHERE user_id = $1',
-                            [userId]
-                        );
-                        console.log('Результат успешно отправлен пользователю');
-                    } catch (sendError) {
-                        console.error('Ошибка при отправке результата пользователю:', sendError);
-                    }
+                try {
+                    await bot.telegram.sendMessage(userId, errorMessage);
+                    await returnCredit(userId);
+                    await bot.telegram.sendMessage(userId, '💳 Кредит был возвращен из-за ошибки обработки.');
+                    
+                    await pool.query(
+                        'UPDATE users SET pending_task_id = NULL WHERE user_id = $1',
+                        [userId]
+                    );
+                } catch (sendError) {
+                    console.error('Ошибка при отправке сообщения об ошибке:', sendError);
                 }
             }
+
+            return res.status(200).json({ success: true, error: img_message || img_message_2 });
+        }
+
+        // Проверяем наличие результата
+        if (!result && (!req.files || req.files.length === 0)) {
+            console.log('Нет результата в запросе');
             return res.status(200).json({ success: true });
         }
-
-        // Получаем id_gen из тела запроса или из имени файла
-        const id_gen = req.body.id_gen || files[0].originalname.split('.')[0];
-        
-        if (!id_gen) {
-            console.error('Получен webhook без id_gen');
-            return res.status(400).json({ success: false, error: 'No id_gen provided' });
-        }
-
-        console.log('Обработка результата для задачи:', id_gen);
 
         const userQuery = await pool.query(
             'SELECT user_id FROM users WHERE pending_task_id = $1',
             [id_gen]
         );
 
-        console.log('Результат запроса пользователя:', userQuery.rows);
-
         if (userQuery.rows.length > 0) {
             const userId = userQuery.rows[0].user_id;
 
             try {
                 console.log('Отправка результата пользователю:', userId);
-                const imageBuffer = files[0].buffer;
-                await bot.telegram.sendPhoto(userId, { source: imageBuffer });
-                await bot.telegram.sendMessage(userId, '✨ Обработка изображения завершена!');
+                
+                let imageBuffer;
+                if (result) {
+                    imageBuffer = Buffer.from(result, 'base64');
+                } else if (req.files && req.files.length > 0) {
+                    imageBuffer = (req.files[0] as Express.Multer.File).buffer;
+                }
+
+                if (imageBuffer) {
+                    await bot.telegram.sendPhoto(userId, { source: imageBuffer });
+                    await bot.telegram.sendMessage(userId, '✨ Обработка изображения завершена!');
+                }
 
                 await pool.query(
                     'UPDATE users SET pending_task_id = NULL WHERE user_id = $1',
@@ -400,10 +442,10 @@ app.post('/webhook', upload.any(), async (req, res) => {
         console.error('Ошибка обработки webhook:', error);
         res.status(500).json({ error: 'Internal server error' });
     }
- });
- 
- // Запуск приложения
- async function start() {
+});
+
+// Запуск приложения
+async function start() {
     try {
         await initDB();
         console.log('База данных инициализирована');
@@ -411,24 +453,24 @@ app.post('/webhook', upload.any(), async (req, res) => {
         app.listen(PORT, '0.0.0.0', () => {
             console.log(`Webhook сервер запущен на порту ${PORT}`);
         });
- 
+
         await bot.launch();
         console.log('Бот запущен');
     } catch (error) {
         console.error('Ошибка при запуске приложения:', error);
         process.exit(1);
     }
- }
- 
- // Graceful shutdown
- process.once('SIGINT', () => {
+}
+
+// Graceful shutdown
+process.once('SIGINT', () => {
     bot.stop('SIGINT');
     pool.end();
- });
- process.once('SIGTERM', () => {
+});
+process.once('SIGTERM', () => {
     bot.stop('SIGTERM');
     pool.end();
- });
- 
- // Запускаем приложение
- start();
+});
+
+// Запускаем приложение
+start();
