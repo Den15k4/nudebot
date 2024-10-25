@@ -1,4 +1,4 @@
-```typescript
+// src/index.ts
 import { Telegraf } from 'telegraf';
 import { message } from 'telegraf/filters';
 import axios from 'axios';
@@ -165,7 +165,7 @@ async function processImage(imageBuffer: Buffer, userId: number): Promise<Proces
     }
 }
 
-// Проверка кредитов пользователя
+// Функции работы с пользователями
 async function checkCredits(userId: number): Promise<number> {
     try {
         const result = await pool.query(
@@ -179,7 +179,6 @@ async function checkCredits(userId: number): Promise<number> {
     }
 }
 
-// Уменьшение количества кредитов
 async function useCredit(userId: number) {
     try {
         await pool.query(
@@ -192,7 +191,6 @@ async function useCredit(userId: number) {
     }
 }
 
-// Добавление нового пользователя
 async function addNewUser(userId: number, username: string | undefined) {
     try {
         await pool.query(
@@ -205,7 +203,7 @@ async function addNewUser(userId: number, username: string | undefined) {
     }
 }
 
-// Telegram bot handlers
+// Обработчики команд бота
 bot.command('start', async (ctx) => {
     try {
         const userId = ctx.from.id;
@@ -355,8 +353,6 @@ app.post('/webhook', upload.any(), async (req, res) => {
                         console.error('Ошибка при отправке результата пользователю:', sendError);
                     }
                 }
-            } else {
-                console.log('Пустой webhook запрос');
             }
             return res.status(200).json({ success: true });
         }
@@ -412,12 +408,10 @@ app.post('/webhook', upload.any(), async (req, res) => {
         await initDB();
         console.log('База данных инициализирована');
         
-        // Запуск Express сервера
         app.listen(PORT, '0.0.0.0', () => {
             console.log(`Webhook сервер запущен на порту ${PORT}`);
         });
  
-        // Запуск бота
         await bot.launch();
         console.log('Бот запущен');
     } catch (error) {
