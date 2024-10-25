@@ -1,4 +1,3 @@
-// src/index.ts
 import { Telegraf } from 'telegraf';
 import { message } from 'telegraf/filters';
 import axios from 'axios';
@@ -9,12 +8,13 @@ import express from 'express';
 
 dotenv.config();
 
-// Константы и интерфейсы
+// Проверка переменных окружения
 const BOT_TOKEN = process.env.BOT_TOKEN || '7543266158:AAETR2eLuk2joRxh6w2IvPePUw2LZa8_56U';
 const CLOTHOFF_API_KEY = process.env.CLOTHOFF_API_KEY || '4293b3bc213bba6a74011fba8d4ad9bd460599d9';
-const WEBHOOK_URL = process.env.WEBHOOK_URL || 'https://nudebot.railway.internal/webhook';
-const PORT = process.env.PORT || 3000;
+const WEBHOOK_URL = process.env.WEBHOOK_URL || 'https://nudebot-production.up.railway.app/webhook';
+const PORT = parseInt(process.env.PORT || '8080', 10);
 
+// Интерфейсы
 interface ApiResponse {
     queue_time?: number;
     queue_num?: number;
@@ -30,7 +30,7 @@ interface ProcessingResult {
     idGen?: string;
 }
 
-// Инициализация
+// Инициализация базы данных
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: {
@@ -38,8 +38,10 @@ const pool = new Pool({
     }
 });
 
+// Инициализация бота
 const bot = new Telegraf(BOT_TOKEN);
 
+// Инициализация API клиента
 const apiClient = axios.create({
     baseURL: 'https://public-api.clothoff.net',
     headers: {
@@ -48,22 +50,21 @@ const apiClient = axios.create({
     }
 });
 
-// Express сервер
+// Express сервер для вебхуков
 const app = express();
 app.use(express.json());
 
-// База данных
+// Создание таблиц в базе данных
 async function initDB() {
     const client = await pool.connect();
     try {
-        // Создаем таблицу
         await client.query(`
             CREATE TABLE IF NOT EXISTS users (
                 user_id BIGINT PRIMARY KEY,
                 username TEXT,
                 credits INT DEFAULT 1,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                last_used TIMESTAMP,
+                created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                last_used TIMESTAMPTZ,
                 pending_task_id TEXT
             );
         `);
@@ -78,7 +79,7 @@ async function initDB() {
     }
 }
 
-// Функции работы с API
+// Обработка изображения через API
 async function processImage(imageBuffer: Buffer, userId: number): Promise<ProcessingResult> {
     const formData = new FormData();
     const id_gen = `user_${userId}_${Date.now()}`;
@@ -118,17 +119,18 @@ async function processImage(imageBuffer: Buffer, userId: number): Promise<Proces
             }
             throw new Error(`API Error: ${apiResponse.error}`);
         }
-
+        
+        // Сохраняем id_gen в базе данных
         await pool.query(
             'UPDATE users SET pending_task_id = $1 WHERE user_id = $2',
-            [apiResponse.id_gen, userId]
+            [id_gen, userId]
         );
         
         return {
             queueTime: apiResponse.queue_time,
             queueNum: apiResponse.queue_num,
             apiBalance: apiResponse.api_balance,
-            idGen: apiResponse.id_gen
+            idGen: id_gen
         };
     } catch (error) {
         if (axios.isAxiosError(error) && error.response?.data) {
@@ -142,7 +144,7 @@ async function processImage(imageBuffer: Buffer, userId: number): Promise<Proces
     }
 }
 
-// Функции работы с пользователями
+// Проверка кредитов пользователя
 async function checkCredits(userId: number): Promise<number> {
     try {
         const result = await pool.query(
@@ -156,6 +158,7 @@ async function checkCredits(userId: number): Promise<number> {
     }
 }
 
+// Уменьшение количества кредитов
 async function useCredit(userId: number) {
     try {
         await pool.query(
@@ -168,6 +171,7 @@ async function useCredit(userId: number) {
     }
 }
 
+// Добавление нового пользователя
 async function addNewUser(userId: number, username: string | undefined) {
     try {
         await pool.query(
@@ -180,7 +184,7 @@ async function addNewUser(userId: number, username: string | undefined) {
     }
 }
 
-// Обработчики команд бота
+// Команда /start
 bot.command('start', async (ctx) => {
     try {
         const userId = ctx.from.id;
@@ -201,6 +205,7 @@ bot.command('start', async (ctx) => {
     }
 });
 
+// Обработчик изображений
 bot.on(message('photo'), async (ctx) => {
     const userId = ctx.from.id;
     let processingMsg;
@@ -270,6 +275,7 @@ bot.on(message('photo'), async (ctx) => {
     }
 });
 
+// Команда /credits
 bot.command('credits', async (ctx) => {
     try {
         const userId = ctx.from.id;
@@ -281,10 +287,18 @@ bot.command('credits', async (ctx) => {
     }
 });
 
+// Тестовый endpoint
+app.get('/health', (req, res) => {
+    res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
 // Webhook обработчик
 app.post('/webhook', async (req, res) => {
     try {
-        console.log('Получен webhook:', req.body);
+        console.log('Получен webhook запрос');
+        console.log('Headers:', req.headers);
+        console.log('Body:', JSON.stringify(req.body, null, 2));
+        
         const { id_gen, result, error } = req.body;
         
         if (error) {
@@ -292,18 +306,26 @@ app.post('/webhook', async (req, res) => {
             return res.status(200).json({ success: false, error });
         }
 
+        if (!id_gen) {
+            console.error('Получен webhook без id_gen');
+            return res.status(400).json({ success: false, error: 'No id_gen provided' });
+        }
+
         if (result) {
-            console.log('Обработка результата для задачи:', id_gen);
+            console.log('Начинаем обработку результата для задачи:', id_gen);
             
             const userQuery = await pool.query(
                 'SELECT user_id FROM users WHERE pending_task_id = $1',
                 [id_gen]
             );
             
+            console.log('Результат запроса пользователя:', userQuery.rows);
+            
             if (userQuery.rows.length > 0) {
                 const userId = userQuery.rows[0].user_id;
                 
                 try {
+                    console.log('Отправка результата пользователю:', userId);
                     const imageBuffer = Buffer.from(result, 'base64');
                     await bot.telegram.sendPhoto(userId, { source: imageBuffer });
                     await bot.telegram.sendMessage(userId, '✨ Обработка изображения завершена!');
@@ -312,10 +334,15 @@ app.post('/webhook', async (req, res) => {
                         'UPDATE users SET pending_task_id = NULL WHERE user_id = $1',
                         [userId]
                     );
+                    console.log('Результат успешно отправлен пользователю');
                 } catch (sendError) {
                     console.error('Ошибка при отправке результата пользователю:', sendError);
                 }
+            } else {
+                console.log('Пользователь не найден для задачи:', id_gen);
             }
+        } else {
+            console.log('Получен webhook без результата');
         }
         
         res.status(200).json({ success: true });
@@ -331,7 +358,7 @@ async function start() {
         await initDB();
         console.log('База данных инициализирована');
         
-        app.listen(PORT, () => {
+        app.listen(PORT, '0.0.0.0', () => {
             console.log(`Webhook сервер запущен на порту ${PORT}`);
         });
 
@@ -353,4 +380,5 @@ process.once('SIGTERM', () => {
     pool.end();
 });
 
+// Запускаем приложение
 start();
