@@ -58,16 +58,33 @@ app.use(express.json());
 async function initDB() {
     const client = await pool.connect();
     try {
+        // Создаем таблицу, если её нет
         await client.query(`
             CREATE TABLE IF NOT EXISTS users (
                 user_id BIGINT PRIMARY KEY,
                 username TEXT,
                 credits INT DEFAULT 1,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                last_used TIMESTAMP,
-                pending_task_id TEXT
+                last_used TIMESTAMP
             );
         `);
+
+        // Проверяем существование колонки pending_task_id
+        const columnCheck = await client.query(`
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name = 'users' AND column_name = 'pending_task_id';
+        `);
+
+        // Если колонки нет, добавляем её
+        if (columnCheck.rows.length === 0) {
+            await client.query(`
+                ALTER TABLE users 
+                ADD COLUMN pending_task_id TEXT;
+            `);
+            console.log('Колонка pending_task_id добавлена');
+        }
+
         console.log('База данных инициализирована успешно');
     } catch (error) {
         if (error instanceof Error) {
