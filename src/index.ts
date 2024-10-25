@@ -1,3 +1,4 @@
+// src/index.ts
 import { Telegraf } from 'telegraf';
 import { message } from 'telegraf/filters';
 import axios from 'axios';
@@ -8,13 +9,12 @@ import express from 'express';
 
 dotenv.config();
 
-// Проверка переменных окружения
+// Константы и интерфейсы
 const BOT_TOKEN = process.env.BOT_TOKEN || '7543266158:AAETR2eLuk2joRxh6w2IvPePUw2LZa8_56U';
 const CLOTHOFF_API_KEY = process.env.CLOTHOFF_API_KEY || '4293b3bc213bba6a74011fba8d4ad9bd460599d9';
 const WEBHOOK_URL = process.env.WEBHOOK_URL || 'https://nudebot.railway.internal/webhook';
 const PORT = process.env.PORT || 3000;
 
-// Интерфейсы
 interface ApiResponse {
     queue_time?: number;
     queue_num?: number;
@@ -30,7 +30,7 @@ interface ProcessingResult {
     idGen?: string;
 }
 
-// Инициализация базы данных
+// Инициализация
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: {
@@ -38,10 +38,8 @@ const pool = new Pool({
     }
 });
 
-// Инициализация бота
 const bot = new Telegraf(BOT_TOKEN);
 
-// Инициализация API клиента
 const apiClient = axios.create({
     baseURL: 'https://public-api.clothoff.net',
     headers: {
@@ -50,54 +48,25 @@ const apiClient = axios.create({
     }
 });
 
-// Express сервер для вебхуков
+// Express сервер
 const app = express();
 app.use(express.json());
 
-// Создание таблиц в базе данных
+// База данных
 async function initDB() {
     const client = await pool.connect();
     try {
-        // Создаем таблицу, если её нет
+        // Создаем таблицу
         await client.query(`
             CREATE TABLE IF NOT EXISTS users (
                 user_id BIGINT PRIMARY KEY,
                 username TEXT,
                 credits INT DEFAULT 1,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_used TIMESTAMP,
+                pending_task_id TEXT
             );
         `);
-
-        // Проверяем и добавляем необходимые колонки
-        const columns = [
-            {
-                name: 'pending_task_id',
-                type: 'TEXT',
-                default: null
-            },
-            {
-                name: 'last_used',
-                type: 'TIMESTAMP',
-                default: null
-            }
-        ];
-
-        for (const column of columns) {
-            const columnCheck = await client.query(`
-                SELECT column_name 
-                FROM information_schema.columns 
-                WHERE table_name = 'users' AND column_name = $1;
-            `, [column.name]);
-
-            if (columnCheck.rows.length === 0) {
-                await client.query(`
-                    ALTER TABLE users 
-                    ADD COLUMN ${column.name} ${column.type} DEFAULT ${column.default};
-                `);
-                console.log(`Колонка ${column.name} добавлена`);
-            }
-        }
-
         console.log('База данных инициализирована успешно');
     } catch (error) {
         if (error instanceof Error) {
@@ -109,32 +78,7 @@ async function initDB() {
     }
 }
 
-// Также обновим функцию useCredit, чтобы она была более устойчивой к ошибкам
-async function useCredit(userId: number) {
-    try {
-        await pool.query(
-            'UPDATE users SET credits = credits - 1 WHERE user_id = $1',
-            [userId]
-        );
-        
-        // Пробуем обновить last_used в отдельном запросе
-        try {
-            await pool.query(
-                'UPDATE users SET last_used = CURRENT_TIMESTAMP WHERE user_id = $1',
-                [userId]
-            );
-        } catch (error) {
-            // Игнорируем ошибку обновления last_used,
-            // так как это не критично для основной функциональности
-            console.warn('Не удалось обновить last_used:', error);
-        }
-    } catch (error) {
-        console.error('Ошибка при использовании кредита:', error);
-        throw new Error('Не удалось использовать кредит');
-    }
-}
-
-// Обработка изображения через API
+// Функции работы с API
 async function processImage(imageBuffer: Buffer, userId: number): Promise<ProcessingResult> {
     const formData = new FormData();
     const id_gen = `user_${userId}_${Date.now()}`;
@@ -169,15 +113,12 @@ async function processImage(imageBuffer: Buffer, userId: number): Promise<Proces
         const apiResponse: ApiResponse = response.data;
         
         if (apiResponse.error) {
+            if (apiResponse.error === 'Insufficient balance') {
+                throw new Error('INSUFFICIENT_BALANCE');
+            }
             throw new Error(`API Error: ${apiResponse.error}`);
         }
 
-        // Проверяем баланс API
-        if (apiResponse.api_balance === 0) {
-            throw new Error('Недостаточно баланса API');
-        }
-        
-        // Сохраняем id_gen в базе данных
         await pool.query(
             'UPDATE users SET pending_task_id = $1 WHERE user_id = $2',
             [apiResponse.id_gen, userId]
@@ -192,13 +133,16 @@ async function processImage(imageBuffer: Buffer, userId: number): Promise<Proces
     } catch (error) {
         if (axios.isAxiosError(error) && error.response?.data) {
             console.error('API Error Response:', error.response.data);
+            if (error.response.data.error === 'Insufficient balance') {
+                throw new Error('INSUFFICIENT_BALANCE');
+            }
             throw new Error(`API Error: ${error.response.data.error || 'Unknown error'}`);
         }
         throw error;
     }
 }
 
-// Проверка кредитов пользователя
+// Функции работы с пользователями
 async function checkCredits(userId: number): Promise<number> {
     try {
         const result = await pool.query(
@@ -212,7 +156,6 @@ async function checkCredits(userId: number): Promise<number> {
     }
 }
 
-// Уменьшение количества кредитов
 async function useCredit(userId: number) {
     try {
         await pool.query(
@@ -225,7 +168,6 @@ async function useCredit(userId: number) {
     }
 }
 
-// Добавление нового пользователя
 async function addNewUser(userId: number, username: string | undefined) {
     try {
         await pool.query(
@@ -238,7 +180,7 @@ async function addNewUser(userId: number, username: string | undefined) {
     }
 }
 
-// Команда /start
+// Обработчики команд бота
 bot.command('start', async (ctx) => {
     try {
         const userId = ctx.from.id;
@@ -259,7 +201,6 @@ bot.command('start', async (ctx) => {
     }
 });
 
-// Обработчик изображений
 bot.on(message('photo'), async (ctx) => {
     const userId = ctx.from.id;
     let processingMsg;
@@ -299,11 +240,8 @@ bot.on(message('photo'), async (ctx) => {
                 `🔄 ID задачи: ${result.idGen}\n\n` +
                 'Результат будет отправлен, когда обработка завершится.'
             );
-        } else {
-            throw new Error('Не получен id_gen от API');
         }
 
-        // Удаляем сообщение о процессе обработки
         if (processingMsg) {
             await ctx.telegram.deleteMessage(ctx.chat.id, processingMsg.message_id).catch(() => {});
         }
@@ -314,8 +252,11 @@ bot.on(message('photo'), async (ctx) => {
         if (error instanceof Error) {
             console.error('Ошибка при обработке изображения:', error.message);
             
-            if (error.message.includes('Недостаточно баланса API')) {
-                errorMessage = '❌ К сожалению, сервис временно недоступен из-за исчерпания баланса API. Попробуйте позже.';
+            if (error.message === 'INSUFFICIENT_BALANCE') {
+                errorMessage = '⚠️ Сервис временно недоступен\n\n' +
+                    'К сожалению, у сервиса закончился баланс API. ' +
+                    'Пожалуйста, попробуйте позже или свяжитесь с администратором бота.\n\n' +
+                    'Ваши кредиты сохранены и будут доступны позже.';
             } else {
                 errorMessage += `\n${error.message}`;
             }
@@ -323,14 +264,12 @@ bot.on(message('photo'), async (ctx) => {
 
         await ctx.reply(errorMessage);
 
-        // Пытаемся удалить сообщение о процессе обработки в случае ошибки
         if (processingMsg) {
             await ctx.telegram.deleteMessage(ctx.chat.id, processingMsg.message_id).catch(() => {});
         }
     }
 });
 
-// Команда /credits
 bot.command('credits', async (ctx) => {
     try {
         const userId = ctx.from.id;
@@ -342,7 +281,7 @@ bot.command('credits', async (ctx) => {
     }
 });
 
-// Обработчик вебхуков
+// Webhook обработчик
 app.post('/webhook', async (req, res) => {
     try {
         console.log('Получен webhook:', req.body);
@@ -356,7 +295,6 @@ app.post('/webhook', async (req, res) => {
         if (result) {
             console.log('Обработка результата для задачи:', id_gen);
             
-            // Находим пользователя по id_gen
             const userQuery = await pool.query(
                 'SELECT user_id FROM users WHERE pending_task_id = $1',
                 [id_gen]
@@ -366,12 +304,10 @@ app.post('/webhook', async (req, res) => {
                 const userId = userQuery.rows[0].user_id;
                 
                 try {
-                    // Отправляем результат пользователю
                     const imageBuffer = Buffer.from(result, 'base64');
                     await bot.telegram.sendPhoto(userId, { source: imageBuffer });
                     await bot.telegram.sendMessage(userId, '✨ Обработка изображения завершена!');
                     
-                    // Очищаем pending_task_id
                     await pool.query(
                         'UPDATE users SET pending_task_id = NULL WHERE user_id = $1',
                         [userId]
@@ -379,8 +315,6 @@ app.post('/webhook', async (req, res) => {
                 } catch (sendError) {
                     console.error('Ошибка при отправке результата пользователю:', sendError);
                 }
-            } else {
-                console.log('Пользователь не найден для задачи:', id_gen);
             }
         }
         
@@ -397,12 +331,10 @@ async function start() {
         await initDB();
         console.log('База данных инициализирована');
         
-        // Запуск Express сервера
         app.listen(PORT, () => {
             console.log(`Webhook сервер запущен на порту ${PORT}`);
         });
 
-        // Запуск бота
         await bot.launch();
         console.log('Бот запущен');
     } catch (error) {
@@ -411,7 +343,7 @@ async function start() {
     }
 }
 
-// Graceful stop
+// Graceful shutdown
 process.once('SIGINT', () => {
     bot.stop('SIGINT');
     pool.end();
