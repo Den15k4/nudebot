@@ -18,6 +18,8 @@ interface Price {
     KZT: number;
 }
 
+type SupportedCurrency = 'RUB' | 'USD' | 'UZS' | 'KZT';
+
 interface PaymentPackage {
     id: number;
     credits: number;
@@ -45,7 +47,7 @@ interface RukassaWebhookBody {
 }
 
 interface Currency {
-    code: keyof Price;
+    code: SupportedCurrency;
     symbol: string;
     name: string;
 }
@@ -159,38 +161,34 @@ export class RukassaPayment {
         return calculatedSign === data.sign;
     }
 
-    private isSupportedCurrency(currency: string): currency is keyof Price {
+    private isSupportedCurrency(currency: string): currency is SupportedCurrency {
         return SUPPORTED_CURRENCIES.some(c => c.code === currency);
     }
 
-    async createPayment(userId: number, packageId: number, currency: keyof Price = 'RUB'): Promise<string> {
+    async createPayment(userId: number, packageId: number, currency: SupportedCurrency = 'RUB'): Promise<string> {
         const package_ = CREDIT_PACKAGES.find(p => p.id === packageId);
         if (!package_) {
             throw new Error('Неверный ID пакета');
         }
 
-        if (!this.isSupportedCurrency(currency)) {
-            throw new Error('Неподдерживаемая валюта');
-        }
-
         const merchantOrderId = `${userId}_${Date.now()}`;
-        const amount = package_.prices[currency];
+        const amount = package_.prices[currency].toString();
         
         try {
             await this.pool.query(
                 'INSERT INTO payments (user_id, merchant_order_id, amount, credits, status, currency) VALUES ($1, $2, $3, $4, $5, $6)',
-                [userId, merchantOrderId, amount, package_.credits, 'pending', currency]
+                [userId, merchantOrderId, parseFloat(amount), package_.credits, 'pending', currency]
             );
 
             const paymentData = {
                 shop_id: RUKASSA_SHOP_ID,
                 order_id: merchantOrderId,
-                amount: amount.toString(),
+                amount: amount,
                 currency: currency,
                 receipt_items: [{
                     name: package_.description,
                     count: 1,
-                    price: amount
+                    price: parseFloat(amount)
                 }],
                 webhook_url: 'https://nudebot-production.up.railway.app/rukassa/webhook',
                 custom_fields: JSON.stringify({ credits: package_.credits }),
@@ -199,13 +197,14 @@ export class RukassaPayment {
                 fail_url: 'https://t.me/photowombot'
             };
 
-            const signParams = {
+            const signParamsString: Record<string, string> = {
                 shop_id: paymentData.shop_id,
                 amount: paymentData.amount,
                 order_id: paymentData.order_id,
                 currency: paymentData.currency
             };
-            const sign = this.generateSign(signParams);
+
+            const sign = this.generateSign(signParamsString);
 
             console.log('Создание платежа:', paymentData);
 
@@ -314,7 +313,7 @@ export function setupPaymentCommands(bot: Telegraf, pool: Pool): void {
     });
 
     bot.action(/currency_(.+)/, async (ctx) => {
-        const currency = ctx.match[1] as keyof Price;
+        const currency = ctx.match[1] as SupportedCurrency;
         const curr = SUPPORTED_CURRENCIES.find(c => c.code === currency);
         
         if (!curr) {
@@ -342,7 +341,7 @@ export function setupPaymentCommands(bot: Telegraf, pool: Pool): void {
     bot.action(/buy_(\d+)_(.+)/, async (ctx) => {
         try {
             const packageId = parseInt(ctx.match[1]);
-            const currency = ctx.match[2] as keyof Price;
+            const currency = ctx.match[2] as SupportedCurrency;
             const userId = ctx.from?.id;
 
             if (!userId) {
