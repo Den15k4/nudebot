@@ -138,8 +138,19 @@ export class RukassaPayment {
                 }],
                 webhook_url: 'https://nudebot-production.up.railway.app/rukassa/webhook',
                 custom_fields: JSON.stringify({ credits: package_.credits }),
-                method: 'all'
+                method: 'all',
+                success_url: 'https://t.me/photowombot',
+                fail_url: 'https://t.me/photowombot'
             };
+
+            // Генерируем подпись для запроса
+            const signParams = {
+                shop_id: paymentData.shop_id,
+                amount: paymentData.amount,
+                order_id: paymentData.order_id,
+                currency: paymentData.currency
+            };
+            const sign = this.generateSign(signParams);
 
             console.log('Создание платежа:', paymentData);
 
@@ -150,7 +161,9 @@ export class RukassaPayment {
                 {
                     headers: {
                         'Content-Type': 'application/json',
-                        'Accept': 'application/json'
+                        'Accept': 'application/json',
+                        'Authorization': `Bearer ${RUKASSA_SECRET_KEY}`,
+                        'Sign': sign
                     },
                     timeout: 10000
                 }
@@ -159,6 +172,7 @@ export class RukassaPayment {
             console.log('Ответ Rukassa:', response.data);
 
             if (response.data.status !== 1 || !response.data.url) {
+                console.error('Ошибка ответа Rukassa:', response.data);
                 throw new Error(response.data.message || 'Не удалось создать платёж');
             }
 
@@ -231,6 +245,20 @@ export class RukassaPayment {
             throw error;
         } finally {
             client.release();
+        }
+    }
+
+    // Получение статуса платежа
+    async getPaymentStatus(userId: number, merchantOrderId: string): Promise<string> {
+        try {
+            const result = await this.pool.query(
+                'SELECT status FROM payments WHERE user_id = $1 AND merchant_order_id = $2',
+                [userId, merchantOrderId]
+            );
+            return result.rows[0]?.status || 'unknown';
+        } catch (error) {
+            console.error('Ошибка при получении статуса платежа:', error);
+            throw error;
         }
     }
 }
