@@ -1,4 +1,4 @@
-import { Telegraf, Markup } from 'telegraf';
+import { Telegraf } from 'telegraf';
 import { message } from 'telegraf/filters';
 import axios from 'axios';
 import { Pool } from 'pg';
@@ -6,7 +6,7 @@ import dotenv from 'dotenv';
 import FormData from 'form-data';
 import express from 'express';
 import multer from 'multer';
-import { RukassaPayment } from './rukassa';
+import { RukassaPayment, setupPaymentCommands, setupRukassaWebhook } from './rukassa';
 
 dotenv.config();
 
@@ -164,7 +164,6 @@ async function processImage(imageBuffer: Buffer, userId: number): Promise<Proces
             throw new Error(`API Error: ${apiResponse.error}`);
         }
         
-        // Сохраняем id_gen в базе данных
         await pool.query(
             'UPDATE users SET pending_task_id = $1 WHERE user_id = $2',
             [id_gen, userId]
@@ -260,50 +259,6 @@ bot.command('start', async (ctx) => {
     }
 });
 
-// Команда для покупки кредитов
-bot.command('buy', async (ctx) => {
-    try {
-        const keyboard = Markup.inlineKeyboard([
-            [Markup.button.callback('5 кредитов - 199 ₽', 'buy_1')],
-            [Markup.button.callback('10 кредитов - 349 ₽', 'buy_2')],
-            [Markup.button.callback('20 кредитов - 599 ₽', 'buy_3')]
-        ]);
-
-        await ctx.reply(
-            '💳 Выберите пакет кредитов для покупки:',
-            keyboard
-        );
-    } catch (error) {
-        console.error('Ошибка в команде buy:', error);
-        await ctx.reply('Произошла ошибка. Попробуйте позже.');
-    }
-});
-
-// Обработчик выбора пакета кредитов
-bot.action(/buy_(\d+)/, async (ctx) => {
-    try {
-        const packageId = parseInt(ctx.match[1]);
-        const userId = ctx.from?.id;
-
-        if (!userId) {
-            throw new Error('ID пользователя не найден');
-        }
-
-        const rukassaPayment = new RukassaPayment(pool, bot);
-        const paymentUrl = await rukassaPayment.createPayment(userId, packageId);
-
-        await ctx.reply(
-            `🔄 Для оплаты кредитов перейдите по ссылке:\n${paymentUrl}\n\n` +
-            'После оплаты кредиты будут автоматически зачислены на ваш счет.',
-            { disable_web_page_preview: true }
-        );
-    } catch (error) {
-        console.error('Ошибка при обработке платежа:', error);
-        await ctx.reply('❌ Произошла ошибка при создании платежа. Попробуйте позже.');
-    }
-    await ctx.answerCbQuery();
-});
-
 bot.command('credits', async (ctx) => {
     try {
         const userId = ctx.from.id;
@@ -323,9 +278,7 @@ bot.on(message('photo'), async (ctx) => {
         const credits = await checkCredits(userId);
 
         if (credits <= 0) {
-            return ctx.reply(
-                'У вас закончились кредиты. Используйте команду /buy для покупки дополнительных кредитов.'
-            );
+            return ctx.reply('У вас закончились кредиты. Используйте команду /buy для покупки дополнительных кредитов.');
         }
 
         await ctx.reply(
@@ -407,7 +360,7 @@ app.get('/health', (req, res) => {
     res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// Webhook handler для Clothoff API
+// Webhook handler для Clothoff
 app.post('/webhook', upload.any(), async (req, res) => {
     try {
         console.log('Получен webhook запрос');
@@ -501,30 +454,22 @@ app.post('/webhook', upload.any(), async (req, res) => {
     }
 });
 
-// Webhook handler для Rukassa
-app.post('/rukassa/webhook', express.json(), async (req, res) => {
-    try {
-        console.log('Получен webhook от Rukassa:', req.body);
-        const rukassaPayment = new RukassaPayment(pool, bot);
-        await rukassaPayment.handleWebhook(req.body);
-        res.json({ status: 'success' });
-    } catch (error) {
-        console.error('Ошибка обработки webhook от Rukassa:', error);
-        res.status(400).json({ error: 'Invalid webhook data' });
-    }
-});
-
 // Запуск приложения
 async function start() {
     try {
         await initDB();
         console.log('База данных инициализирована');
-        
-        // Инициализация таблицы платежей
+
+        // Инициализация Rukassa
         const rukassaPayment = new RukassaPayment(pool, bot);
         await rukassaPayment.initPaymentsTable();
         console.log('Таблица платежей инициализирована');
 
+        // Настройка обработчиков платежей
+        setupPaymentCommands(bot, pool);
+        setupRukassaWebhook(app, rukassaPayment);
+        console.log('Платежная система инициализирована');
+        
         app.listen(PORT, '0.0.0.0', () => {
             console.log(`Webhook сервер запущен на порту ${PORT}`);
         });

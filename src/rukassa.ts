@@ -11,6 +11,7 @@ const RUKASSA_API_URL = 'https://lk.rukassa.io';
 
 // Интерфейсы
 interface Price {
+    [key: string]: number;
     RUB: number;
     USD: number;
     UZS: number;
@@ -44,7 +45,7 @@ interface RukassaWebhookBody {
 }
 
 interface Currency {
-    code: string;
+    code: keyof Price;
     symbol: string;
     name: string;
 }
@@ -57,7 +58,7 @@ const SUPPORTED_CURRENCIES: Currency[] = [
     { code: 'KZT', symbol: '₸', name: 'Тенге' }
 ];
 
-// Пакеты кредитов с ценами в разных валютах
+// Пакеты кредитов
 const CREDIT_PACKAGES: PaymentPackage[] = [
     {
         id: 1,
@@ -103,7 +104,7 @@ export class RukassaPayment {
         this.bot = bot;
     }
 
-    async initPaymentsTable() {
+    async initPaymentsTable(): Promise<void> {
         const client = await this.pool.connect();
         try {
             await client.query(`
@@ -158,27 +159,17 @@ export class RukassaPayment {
         return calculatedSign === data.sign;
     }
 
-    private formatPrice(price: number, currency: string): string {
-        const curr = SUPPORTED_CURRENCIES.find(c => c.code === currency);
-        if (!curr) return `${price}`;
-
-        let formattedPrice = price.toString();
-        if (currency === 'UZS' || currency === 'KZT') {
-            formattedPrice = Math.round(price).toString();
-        } else {
-            formattedPrice = price.toFixed(2);
-        }
-
-        return `${formattedPrice} ${curr.symbol}`;
+    private isSupportedCurrency(currency: string): currency is keyof Price {
+        return SUPPORTED_CURRENCIES.some(c => c.code === currency);
     }
 
-    async createPayment(userId: number, packageId: number, currency: string = 'RUB'): Promise<string> {
+    async createPayment(userId: number, packageId: number, currency: keyof Price = 'RUB'): Promise<string> {
         const package_ = CREDIT_PACKAGES.find(p => p.id === packageId);
         if (!package_) {
             throw new Error('Неверный ID пакета');
         }
 
-        if (!package_.prices[currency]) {
+        if (!this.isSupportedCurrency(currency)) {
             throw new Error('Неподдерживаемая валюта');
         }
 
@@ -235,7 +226,6 @@ export class RukassaPayment {
             console.log('Ответ Rukassa:', response.data);
 
             if (response.data.status !== 1 || !response.data.url) {
-                console.error('Ошибка ответа Rukassa:', response.data);
                 throw new Error(response.data.message || 'Не удалось создать платёж');
             }
 
@@ -285,10 +275,10 @@ export class RukassaPayment {
                     [credits, user_id]
                 );
 
-                const formattedAmount = this.formatPrice(amount, currency);
+                const curr = SUPPORTED_CURRENCIES.find(c => c.code === currency);
                 await this.bot.telegram.sendMessage(
                     user_id,
-                    `✅ Оплата ${formattedAmount} успешно получена!\nНа ваш счет зачислено ${credits} кредитов.`
+                    `✅ Оплата ${amount} ${curr?.symbol || currency} успешно получена!\nНа ваш счет зачислено ${credits} кредитов.`
                 );
             } else if (data.payment_status === 'failed') {
                 await this.bot.telegram.sendMessage(
@@ -308,7 +298,7 @@ export class RukassaPayment {
     }
 }
 
-export function setupPaymentCommands(bot: Telegraf) {
+export function setupPaymentCommands(bot: Telegraf, pool: Pool): void {
     bot.command('buy', async (ctx) => {
         const keyboard = Markup.inlineKeyboard([
             [Markup.button.callback('🇷🇺 Рубли', 'currency_RUB')],
@@ -324,7 +314,7 @@ export function setupPaymentCommands(bot: Telegraf) {
     });
 
     bot.action(/currency_(.+)/, async (ctx) => {
-        const currency = ctx.match[1];
+        const currency = ctx.match[1] as keyof Price;
         const curr = SUPPORTED_CURRENCIES.find(c => c.code === currency);
         
         if (!curr) {
@@ -352,14 +342,14 @@ export function setupPaymentCommands(bot: Telegraf) {
     bot.action(/buy_(\d+)_(.+)/, async (ctx) => {
         try {
             const packageId = parseInt(ctx.match[1]);
-            const currency = ctx.match[2];
+            const currency = ctx.match[2] as keyof Price;
             const userId = ctx.from?.id;
 
             if (!userId) {
                 throw new Error('ID пользователя не найден');
             }
 
-            const rukassaPayment = new RukassaPayment(ctx.botInfo.pool, bot);
+            const rukassaPayment = new RukassaPayment(pool, bot);
             const paymentUrl = await rukassaPayment.createPayment(userId, packageId, currency);
 
             const package_ = CREDIT_PACKAGES.find(p => p.id === packageId);
@@ -379,7 +369,7 @@ export function setupPaymentCommands(bot: Telegraf) {
     });
 }
 
-export function setupRukassaWebhook(app: express.Express, rukassaPayment: RukassaPayment) {
+export function setupRukassaWebhook(app: express.Express, rukassaPayment: RukassaPayment): void {
     app.post('/rukassa/webhook', express.json(), async (req, res) => {
         try {
             console.log('Получен webhook от Rukassa:', req.body);
