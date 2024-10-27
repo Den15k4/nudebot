@@ -245,9 +245,9 @@ export class RukassaPayment {
                         'Content-Type': 'application/json',
                         'Token': RUKASSA_SECRET_KEY
                     },
-                    timeout: 30000, // Увеличиваем таймаут
-                    maxRedirects: 5, // Добавляем редиректы
-                    validateStatus: (status) => status >= 200 && status < 500 // Принимаем любой успешный статус
+                    timeout: 30000,
+                    maxRedirects: 5,
+                    validateStatus: (status) => status >= 200 && status < 500
                 }
             );
     
@@ -267,8 +267,7 @@ export class RukassaPayment {
                     status: error.response?.status,
                     headers: error.response?.headers,
                     message: error.message,
-                    code: error.code,
-                    hostname: error.hostname
+                    code: error.code
                 });
             }
             
