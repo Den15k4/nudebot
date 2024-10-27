@@ -278,16 +278,18 @@ export class RukassaPayment {
 
 export function setupPaymentCommands(bot: Telegraf, pool: Pool): void {
     bot.command('buy', async (ctx) => {
-        const keyboard = Markup.inlineKeyboard([
-            [Markup.button.callback('🇷🇺 Рубли', 'currency_RUB')],
-            [Markup.button.callback('🇺🇸 Доллары', 'currency_USD')],
-            [Markup.button.callback('🇺🇿 Сум', 'currency_UZS')],
-            [Markup.button.callback('🇰🇿 Тенге', 'currency_KZT')]
-        ]);
+        const keyboard = {
+            inline_keyboard: [
+                [Markup.button.callback('🇷🇺 Рубли', 'currency_RUB')],
+                [Markup.button.callback('🇺🇸 Доллары', 'currency_USD')],
+                [Markup.button.callback('🇺🇿 Сум', 'currency_UZS')],
+                [Markup.button.callback('🇰🇿 Тенге', 'currency_KZT')]
+            ]
+        };
 
         await ctx.reply(
             '💳 Выберите валюту для оплаты:',
-            keyboard
+            { reply_markup: keyboard }
         );
     });
 
@@ -301,19 +303,21 @@ export function setupPaymentCommands(bot: Telegraf, pool: Pool): void {
                 return;
             }
 
-            const keyboard = Markup.inlineKeyboard(
-                CREDIT_PACKAGES.map(pkg => [
+            const keyboard = {
+                inline_keyboard: CREDIT_PACKAGES.map(pkg => [
                     Markup.button.callback(
                         `${pkg.description} - ${pkg.prices[currency]} ${curr.symbol}`,
                         `buy_${pkg.id}_${currency}`
                     )
                 ])
-            );
+            };
 
             await ctx.answerCbQuery();
             await ctx.editMessageText(
                 `💳 Выберите пакет кредитов (цены в ${curr.name}):`,
-                { reply_markup: keyboard }
+                {
+                    reply_markup: keyboard
+                }
             );
         } catch (error) {
             try {
@@ -342,7 +346,6 @@ export function setupPaymentCommands(bot: Telegraf, pool: Pool): void {
             const package_ = CREDIT_PACKAGES.find(p => p.id === packageId);
             const curr = SUPPORTED_CURRENCIES.find(c => c.code === currency);
 
-            // Отправляем новое сообщение вместо редактирования
             await ctx.reply(
                 `🔄 Для оплаты ${package_?.description} (${package_?.prices[currency]} ${curr?.symbol}) перейдите по ссылке:\n` +
                 `${paymentUrl}\n\n` +
