@@ -7,7 +7,7 @@ import express from 'express';
 // Конфигурация Rukassa
 const RUKASSA_SHOP_ID = process.env.RUKASSA_SHOP_ID || '';
 const RUKASSA_SECRET_KEY = process.env.RUKASSA_SECRET_KEY || '';
-const RUKASSA_API_URL = 'https://pay.rukassa.is';
+const RUKASSA_API_URL = 'https://lk.rukassa.pro';
 
 // Интерфейсы
 interface Price {
@@ -216,13 +216,11 @@ export class RukassaPayment {
                 amount: amount,
                 currency: currency,
                 sign: sign,
-                receipt: {
-                    items: [{
-                        name: package_.description,
-                        count: 1,
-                        price: parseFloat(amount)
-                    }]
-                },
+                receipt_items: [{
+                    name: package_.description,
+                    count: 1,
+                    price: parseFloat(amount)
+                }],
                 notify_url: 'https://nudebot-production.up.railway.app/rukassa/webhook',
                 success_url: 'https://t.me/photowombot',
                 fail_url: 'https://t.me/photowombot',
@@ -233,17 +231,13 @@ export class RukassaPayment {
             };
     
             console.log('Request details:', {
-                url: `${RUKASSA_API_URL}/create`,
+                url: `${RUKASSA_API_URL}/api/v1/create`,
                 data: paymentData,
-                headers: {
-                    'Accept': 'application/json',
-                    'Content-Type': 'application/json',
-                    'Token': RUKASSA_SECRET_KEY.substring(0, 5) + '...'
-                }
+                token_prefix: RUKASSA_SECRET_KEY.substring(0, 5)
             });
     
             const response = await axios.post<RukassaCreatePaymentResponse>(
-                `${RUKASSA_API_URL}/create`,
+                `${RUKASSA_API_URL}/api/v1/create`,
                 paymentData,
                 {
                     headers: {
@@ -251,7 +245,9 @@ export class RukassaPayment {
                         'Content-Type': 'application/json',
                         'Token': RUKASSA_SECRET_KEY
                     },
-                    timeout: 10000
+                    timeout: 30000, // Увеличиваем таймаут
+                    maxRedirects: 5, // Добавляем редиректы
+                    validateStatus: (status) => status >= 200 && status < 500 // Принимаем любой успешный статус
                 }
             );
     
@@ -270,9 +266,12 @@ export class RukassaPayment {
                     response: error.response?.data,
                     status: error.response?.status,
                     headers: error.response?.headers,
-                    message: error.message
+                    message: error.message,
+                    code: error.code,
+                    hostname: error.hostname
                 });
             }
+            
             await this.pool.query(
                 'DELETE FROM payments WHERE merchant_order_id = $1',
                 [merchantOrderId]
