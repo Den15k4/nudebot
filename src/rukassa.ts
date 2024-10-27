@@ -9,6 +9,13 @@ const SHOP_ID = process.env.SHOP_ID || '';
 const TOKEN = process.env.TOKEN || '';
 const RUKASSA_API_URL = 'https://lk.rukassa.pro';
 
+// Выводим параметры для проверки
+console.log('Initialization params:', {
+    SHOP_ID,
+    TOKEN: TOKEN.substring(0, 5) + '...',
+    API_URL: RUKASSA_API_URL
+});
+
 // Интерфейсы
 interface Price {
     [key: string]: number;
@@ -215,7 +222,7 @@ export class RukassaPayment {
                 order_id: merchantOrderId,
                 amount: amount,
                 currency: currency,
-                sign: sign,
+                token: TOKEN,
                 receipt_items: [{
                     name: package_.description,
                     count: 1,
@@ -232,9 +239,10 @@ export class RukassaPayment {
 
             console.log('Request details:', {
                 url: `${RUKASSA_API_URL}/api/v1/create`,
-                data: paymentData,
-                shop_id: SHOP_ID,
-                token_prefix: TOKEN.substring(0, 5)
+                data: {
+                    ...paymentData,
+                    token: TOKEN.substring(0, 5) + '...'
+                }
             });
 
             const response = await axios.post<RukassaCreatePaymentResponse>(
@@ -243,8 +251,7 @@ export class RukassaPayment {
                 {
                     headers: {
                         'Accept': 'application/json',
-                        'Content-Type': 'application/json',
-                        'Token': TOKEN
+                        'Content-Type': 'application/json'
                     },
                     timeout: 30000,
                     maxRedirects: 5,
