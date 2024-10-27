@@ -109,8 +109,24 @@ export class RukassaPayment {
     async initPaymentsTable(): Promise<void> {
         const client = await this.pool.connect();
         try {
+            await client.query('BEGIN');
+    
+            // Проверяем существование таблицы
+            const tableExists = await client.query(`
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables 
+                    WHERE table_name = 'payments'
+                );
+            `);
+    
+            if (tableExists.rows[0].exists) {
+                // Если таблица существует, удаляем ее
+                await client.query('DROP TABLE IF EXISTS payments CASCADE;');
+            }
+    
+            // Создаем таблицу с новой структурой
             await client.query(`
-                CREATE TABLE IF NOT EXISTS payments (
+                CREATE TABLE payments (
                     id SERIAL PRIMARY KEY,
                     user_id BIGINT REFERENCES users(user_id),
                     order_id TEXT UNIQUE,
@@ -123,8 +139,11 @@ export class RukassaPayment {
                     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
                 );
             `);
-            console.log('Таблица payments создана успешно');
+    
+            await client.query('COMMIT');
+            console.log('Таблица payments успешно создана/обновлена');
         } catch (error) {
+            await client.query('ROLLBACK');
             console.error('Ошибка при создании таблицы payments:', error);
             throw error;
         } finally {
