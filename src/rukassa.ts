@@ -7,7 +7,7 @@ import express from 'express';
 // Конфигурация Rukassa
 const RUKASSA_SHOP_ID = process.env.RUKASSA_SHOP_ID || '';
 const RUKASSA_SECRET_KEY = process.env.RUKASSA_SECRET_KEY || '';
-const RUKASSA_API_URL = 'https://lk.rukassa.io';
+const RUKASSA_API_URL = 'https://api.rukassa.is';
 
 // Интерфейсы
 interface Price {
@@ -153,8 +153,8 @@ export class RukassaPayment {
 
     private generateSign(params: Record<string, string>): string {
         const sortedKeys = Object.keys(params).sort();
-        const values = sortedKeys.map(key => params[key]).join(':');
-        const signString = `${values}:${RUKASSA_SECRET_KEY}`;
+        const values = sortedKeys.map(key => params[key]).join('|');
+        const signString = `${values}|${RUKASSA_SECRET_KEY}`;
         console.log('Строка для подписи:', signString);
         return crypto
             .createHash('md5')
@@ -199,46 +199,52 @@ export class RukassaPayment {
                 [userId, merchantOrderId, parseFloat(amount), package_.credits, 'pending', currency]
             );
 
-            // Базовые параметры для подписи
-            const signParams = {
+            // Данные для платежа согласно документации
+            const paymentData = {
+                shop_id: RUKASSA_SHOP_ID,
                 order_id: merchantOrderId,
                 amount: amount,
                 currency: currency,
-                shop_id: RUKASSA_SHOP_ID
+                test: 1,
+                method: 'card',
+                webhook_url: 'https://nudebot-production.up.railway.app/rukassa/webhook',
+                success_url: 'https://t.me/photowombot',
+                fail_url: 'https://t.me/photowombot',
+                custom_fields: JSON.stringify({ 
+                    credits: package_.credits,
+                    description: package_.description 
+                })
             };
 
-            // Генерируем подпись
+            // Генерируем подпись согласно документации
+            const signParams = {
+                amount: paymentData.amount,
+                currency: paymentData.currency,
+                order_id: paymentData.order_id,
+                shop_id: paymentData.shop_id
+            };
             const sign = this.generateSign(signParams);
 
-            // Данные для API
-            const paymentData = {
-                ...signParams,
-                receipt_items: [{
-                    name: package_.description,
-                    count: 1,
-                    price: parseFloat(amount)
-                }],
-                webhook_url: 'https://nudebot-production.up.railway.app/rukassa/webhook',
-                custom_fields: JSON.stringify({ credits: package_.credits }),
-                method: 'all',
-                success_url: 'https://t.me/photowombot',
-                fail_url: 'https://t.me/photowombot'
-            };
-
-            console.log('Создание платежа:', {
-                ...paymentData,
-                sign,
-                token: RUKASSA_SECRET_KEY.substring(0, 5) + '...'
+            console.log('Request details:', {
+                url: `${RUKASSA_API_URL}/v1/create`,
+                data: paymentData,
+                shopId: RUKASSA_SHOP_ID,
+                headers: {
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json',
+                    'Authorization': RUKASSA_SECRET_KEY.substring(0, 5) + '...',
+                    'Sign': sign
+                }
             });
 
             const response = await axios.post<RukassaCreatePaymentResponse>(
-                `${RUKASSA_API_URL}/api/v1/create`,
+                `${RUKASSA_API_URL}/v1/create`,
                 paymentData,
                 {
                     headers: {
-                        'Content-Type': 'application/json',
                         'Accept': 'application/json',
-                        'Token': RUKASSA_SECRET_KEY,
+                        'Content-Type': 'application/json',
+                        'Authorization': RUKASSA_SECRET_KEY,
                         'Sign': sign
                     },
                     timeout: 10000
@@ -247,7 +253,7 @@ export class RukassaPayment {
 
             console.log('Ответ Rukassa:', response.data);
 
-            if (response.data.status !== 1 || !response.data.url) {
+            if (!response.data.url) {
                 console.error('Ошибка ответа Rukassa:', response.data);
                 throw new Error(response.data.message || 'Не удалось создать платёж');
             }
@@ -407,4 +413,4 @@ export function setupRukassaWebhook(app: express.Express, rukassaPayment: Rukass
             });
         }
     });
-}
+ }
