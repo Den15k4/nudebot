@@ -292,29 +292,35 @@ export function setupPaymentCommands(bot: Telegraf, pool: Pool): void {
     });
 
     bot.action(/currency_(.+)/, async (ctx) => {
-        const currency = ctx.match[1] as SupportedCurrency;
-        const curr = SUPPORTED_CURRENCIES.find(c => c.code === currency);
-        
-        if (!curr) {
-            await ctx.reply('Неподдерживаемая валюта');
-            return;
+        try {
+            const currency = ctx.match[1] as SupportedCurrency;
+            const curr = SUPPORTED_CURRENCIES.find(c => c.code === currency);
+            
+            if (!curr) {
+                await ctx.answerCbQuery('Неподдерживаемая валюта');
+                return;
+            }
+
+            const keyboard = Markup.inlineKeyboard(
+                CREDIT_PACKAGES.map(pkg => [
+                    Markup.button.callback(
+                        `${pkg.description} - ${pkg.prices[currency]} ${curr.symbol}`,
+                        `buy_${pkg.id}_${currency}`
+                    )
+                ])
+            );
+
+            await ctx.answerCbQuery();
+            await ctx.editMessageText(
+                `💳 Выберите пакет кредитов (цены в ${curr.name}):`,
+                { reply_markup: keyboard }
+            );
+        } catch (error) {
+            try {
+                await ctx.answerCbQuery();
+            } catch {}
+            console.error('Ошибка при выборе валюты:', error);
         }
-
-        const keyboard = Markup.inlineKeyboard(
-            CREDIT_PACKAGES.map(pkg => [
-                Markup.button.callback(
-                    `${pkg.description} - ${pkg.prices[currency]} ${curr.symbol}`,
-                    `buy_${pkg.id}_${currency}`
-                )
-            ])
-        );
-
-        await ctx.reply(
-            `💳 Выберите пакет кредитов (цены в ${curr.name}):`,
-            keyboard
-        );
-
-        await ctx.answerCbQuery();
     });
 
     bot.action(/buy_(\d+)_(.+)/, async (ctx) => {
@@ -324,8 +330,11 @@ export function setupPaymentCommands(bot: Telegraf, pool: Pool): void {
             const userId = ctx.from?.id;
 
             if (!userId) {
-                throw new Error('ID пользователя не найден');
+                await ctx.answerCbQuery('ID пользователя не найден');
+                return;
             }
+
+            await ctx.answerCbQuery();
 
             const rukassaPayment = new RukassaPayment(pool, bot);
             const paymentUrl = await rukassaPayment.createPayment(userId, packageId, currency);
@@ -333,6 +342,7 @@ export function setupPaymentCommands(bot: Telegraf, pool: Pool): void {
             const package_ = CREDIT_PACKAGES.find(p => p.id === packageId);
             const curr = SUPPORTED_CURRENCIES.find(c => c.code === currency);
 
+            // Отправляем новое сообщение вместо редактирования
             await ctx.reply(
                 `🔄 Для оплаты ${package_?.description} (${package_?.prices[currency]} ${curr?.symbol}) перейдите по ссылке:\n` +
                 `${paymentUrl}\n\n` +
@@ -340,10 +350,12 @@ export function setupPaymentCommands(bot: Telegraf, pool: Pool): void {
                 { disable_web_page_preview: true }
             );
         } catch (error) {
+            try {
+                await ctx.answerCbQuery();
+            } catch {}
             console.error('Ошибка при обработке платежа:', error);
             await ctx.reply('❌ Произошла ошибка при создании платежа. Попробуйте позже.');
         }
-        await ctx.answerCbQuery();
     });
 }
 
