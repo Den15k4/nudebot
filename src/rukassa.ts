@@ -7,13 +7,13 @@ import express from 'express';
 // Конфигурация Rukassa
 const SHOP_ID = process.env.SHOP_ID || '';
 const TOKEN = process.env.TOKEN || '';
-const API_URL = 'https://lk.rukassa.is/api/v1';
+const RUKASSA_API_URL = 'https://lk.rukassa.is/api/v1/create';
 
 // Выводим параметры для проверки
 console.log('Initialization params:', {
     SHOP_ID,
     TOKEN: TOKEN.substring(0, 5) + '...',
-    API_URL
+    API_URL: RUKASSA_API_URL
 });
 
 // Интерфейсы
@@ -173,40 +173,28 @@ export class RukassaPayment {
                 [userId, merchantOrderId, parseFloat(amount), package_.credits, 'pending', currency]
             );
 
-            // Базовые параметры как в PHP примере
+            // Минимальный набор параметров как в PHP примере
             const paymentData = new URLSearchParams({
                 shop_id: SHOP_ID,
                 token: TOKEN,
                 order_id: merchantOrderId,
-                amount: amount,
-                currency: currency,
-                desc: package_.description,
-                method: 'all',
-                success_url: 'https://t.me/photowombot',
-                fail_url: 'https://t.me/photowombot',
-                notify_url: 'https://nudebot-production.up.railway.app/rukassa/webhook',
-                custom_fields: JSON.stringify({ 
-                    user_id: userId,
-                    credits: package_.credits 
-                })
+                amount: amount
             });
 
             console.log('Request details:', {
-                url: `${API_URL}/create`,
+                url: RUKASSA_API_URL,
                 data: Object.fromEntries(paymentData),
                 shop_id: SHOP_ID,
                 token_prefix: TOKEN.substring(0, 5) + '...'
             });
 
             const response = await axios.post<RukassaCreatePaymentResponse>(
-                `${API_URL}/create`,
+                RUKASSA_API_URL,
                 paymentData,
                 {
                     headers: {
                         'Content-Type': 'application/x-www-form-urlencoded'
-                    },
-                    maxRedirects: 5,
-                    validateStatus: (status) => status >= 200 && status < 500
+                    }
                 }
             );
 
@@ -217,7 +205,7 @@ export class RukassaPayment {
                 throw new Error(response.data.message || 'Не удалось создать платёж');
             }
 
-            // Добавляем параметры в URL как в PHP примере
+            // Добавляем параметры пользователя в URL
             const paymentUrl = `${response.data.url}&user_id=${userId}&credits=${package_.credits}`;
             return paymentUrl;
 
@@ -241,7 +229,6 @@ export class RukassaPayment {
             throw new Error('Не удалось создать платёж. Попробуйте позже.');
         }
     }
-
     async handleWebhook(data: RukassaWebhookBody): Promise<void> {
         console.log('Получены данные webhook:', data);
 
