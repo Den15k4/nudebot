@@ -7,13 +7,13 @@ import express from 'express';
 // Конфигурация Rukassa
 const SHOP_ID = process.env.SHOP_ID || '';
 const TOKEN = process.env.TOKEN || '';
-const RUKASSA_API_URL = 'https://api.rukassa.pro';
+const API_URL = 'https://lk.rukassa.is/api/v1';
 
 // Выводим параметры для проверки
 console.log('Initialization params:', {
     SHOP_ID,
     TOKEN: TOKEN.substring(0, 5) + '...',
-    API_URL: RUKASSA_API_URL
+    API_URL
 });
 
 // Интерфейсы
@@ -35,7 +35,7 @@ interface PaymentPackage {
 }
 
 interface RukassaCreatePaymentResponse {
-    status: number;
+    status: boolean;
     error?: string;
     url?: string;
     order_id?: string;
@@ -158,39 +158,6 @@ export class RukassaPayment {
         }
     }
 
-    private generateSign(params: Record<string, string>): string {
-        const sortedKeys = Object.keys(params).sort();
-        const values = sortedKeys.map(key => params[key]).join('|');
-        const signString = `${values}|${TOKEN}`;
-        console.log('Строка для подписи:', signString);
-        return crypto
-            .createHash('md5')
-            .update(signString)
-            .digest('hex');
-    }
-
-    private validateWebhookSign(data: RukassaWebhookBody): boolean {
-        const params = {
-            shop_id: data.shop_id,
-            amount: data.amount,
-            order_id: data.order_id,
-            payment_status: data.payment_status,
-            payment_method: data.payment_method,
-            custom_fields: data.custom_fields,
-            merchant_order_id: data.merchant_order_id
-        };
-        const calculatedSign = this.generateSign(params);
-        console.log('Проверка подписи:', {
-            calculated: calculatedSign,
-            received: data.sign
-        });
-        return calculatedSign === data.sign;
-    }
-
-    private isSupportedCurrency(currency: string): currency is SupportedCurrency {
-        return SUPPORTED_CURRENCIES.some(c => c.code === currency);
-    }
-
     async createPayment(userId: number, packageId: number, currency: SupportedCurrency = 'RUB'): Promise<string> {
         const package_ = CREDIT_PACKAGES.find(p => p.id === packageId);
         if (!package_) {
@@ -206,40 +173,40 @@ export class RukassaPayment {
                 [userId, merchantOrderId, parseFloat(amount), package_.credits, 'pending', currency]
             );
 
-            // Подготавливаем базовые параметры
-            const paymentData = {
-                amount,
-                currency,
+            // Базовые параметры как в PHP примере
+            const paymentData = new URLSearchParams({
                 shop_id: SHOP_ID,
                 token: TOKEN,
                 order_id: merchantOrderId,
-                test: 1,
+                amount: amount,
+                currency: currency,
                 desc: package_.description,
-                notify_url: 'https://nudebot-production.up.railway.app/rukassa/webhook',
+                method: 'all',
                 success_url: 'https://t.me/photowombot',
                 fail_url: 'https://t.me/photowombot',
+                notify_url: 'https://nudebot-production.up.railway.app/rukassa/webhook',
                 custom_fields: JSON.stringify({ 
-                    credits: package_.credits
+                    user_id: userId,
+                    credits: package_.credits 
                 })
-            };
+            });
 
             console.log('Request details:', {
-                url: `${RUKASSA_API_URL}/api/v1/create`,
-                data: {
-                    ...paymentData,
-                    token: TOKEN.substring(0, 5) + '...'
-                },
-                shop_id: SHOP_ID
+                url: `${API_URL}/create`,
+                data: Object.fromEntries(paymentData),
+                shop_id: SHOP_ID,
+                token_prefix: TOKEN.substring(0, 5) + '...'
             });
 
             const response = await axios.post<RukassaCreatePaymentResponse>(
-                `${RUKASSA_API_URL}/api/v1/create`,
+                `${API_URL}/create`,
                 paymentData,
                 {
                     headers: {
-                        'Accept': 'application/json',
-                        'Content-Type': 'application/json'
-                    }
+                        'Content-Type': 'application/x-www-form-urlencoded'
+                    },
+                    maxRedirects: 5,
+                    validateStatus: (status) => status >= 200 && status < 500
                 }
             );
 
@@ -250,7 +217,10 @@ export class RukassaPayment {
                 throw new Error(response.data.message || 'Не удалось создать платёж');
             }
 
-            return response.data.url;
+            // Добавляем параметры в URL как в PHP примере
+            const paymentUrl = `${response.data.url}&user_id=${userId}&credits=${package_.credits}`;
+            return paymentUrl;
+
         } catch (error) {
             console.error('Ошибка при создании платежа:', error);
             if (axios.isAxiosError(error)) {
@@ -274,10 +244,6 @@ export class RukassaPayment {
 
     async handleWebhook(data: RukassaWebhookBody): Promise<void> {
         console.log('Получены данные webhook:', data);
-
-        if (!this.validateWebhookSign(data)) {
-            throw new Error('Неверная подпись webhook');
-        }
 
         const client = await this.pool.connect();
         try {
