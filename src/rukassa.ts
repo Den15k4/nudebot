@@ -7,7 +7,7 @@ import express from 'express';
 // Конфигурация Rukassa
 const RUKASSA_SHOP_ID = process.env.RUKASSA_SHOP_ID || '';
 const RUKASSA_SECRET_KEY = process.env.RUKASSA_SECRET_KEY || '';
-const RUKASSA_API_URL = 'https://api.rukassa.is';
+const RUKASSA_API_URL = 'https://pay.rukassa.is';
 
 // Интерфейсы
 interface Price {
@@ -189,7 +189,7 @@ export class RukassaPayment {
         if (!package_) {
             throw new Error('Неверный ID пакета');
         }
-
+    
         const merchantOrderId = `${userId}_${Date.now()}`;
         const amount = package_.prices[currency].toString();
         
@@ -198,16 +198,32 @@ export class RukassaPayment {
                 'INSERT INTO payments (user_id, merchant_order_id, amount, credits, status, currency) VALUES ($1, $2, $3, $4, $5, $6)',
                 [userId, merchantOrderId, parseFloat(amount), package_.credits, 'pending', currency]
             );
-
-            // Данные для платежа согласно документации
+    
+            // Генерируем подпись
+            const signParams = {
+                amount: amount,
+                currency: currency,
+                order_id: merchantOrderId,
+                shop_id: RUKASSA_SHOP_ID
+            };
+            
+            const sign = this.generateSign(signParams);
+    
+            // Данные для платежа
             const paymentData = {
                 shop_id: RUKASSA_SHOP_ID,
                 order_id: merchantOrderId,
                 amount: amount,
                 currency: currency,
-                test: 1,
-                method: 'card',
-                webhook_url: 'https://nudebot-production.up.railway.app/rukassa/webhook',
+                sign: sign,
+                receipt: {
+                    items: [{
+                        name: package_.description,
+                        count: 1,
+                        price: parseFloat(amount)
+                    }]
+                },
+                notify_url: 'https://nudebot-production.up.railway.app/rukassa/webhook',
                 success_url: 'https://t.me/photowombot',
                 fail_url: 'https://t.me/photowombot',
                 custom_fields: JSON.stringify({ 
@@ -215,49 +231,37 @@ export class RukassaPayment {
                     description: package_.description 
                 })
             };
-
-            // Генерируем подпись согласно документации
-            const signParams = {
-                amount: paymentData.amount,
-                currency: paymentData.currency,
-                order_id: paymentData.order_id,
-                shop_id: paymentData.shop_id
-            };
-            const sign = this.generateSign(signParams);
-
+    
             console.log('Request details:', {
-                url: `${RUKASSA_API_URL}/v1/create`,
+                url: `${RUKASSA_API_URL}/create`,
                 data: paymentData,
-                shopId: RUKASSA_SHOP_ID,
                 headers: {
                     'Accept': 'application/json',
                     'Content-Type': 'application/json',
-                    'Authorization': RUKASSA_SECRET_KEY.substring(0, 5) + '...',
-                    'Sign': sign
+                    'Token': RUKASSA_SECRET_KEY.substring(0, 5) + '...'
                 }
             });
-
+    
             const response = await axios.post<RukassaCreatePaymentResponse>(
-                `${RUKASSA_API_URL}/v1/create`,
+                `${RUKASSA_API_URL}/create`,
                 paymentData,
                 {
                     headers: {
                         'Accept': 'application/json',
                         'Content-Type': 'application/json',
-                        'Authorization': RUKASSA_SECRET_KEY,
-                        'Sign': sign
+                        'Token': RUKASSA_SECRET_KEY
                     },
                     timeout: 10000
                 }
             );
-
+    
             console.log('Ответ Rukassa:', response.data);
-
+    
             if (!response.data.url) {
                 console.error('Ошибка ответа Rukassa:', response.data);
                 throw new Error(response.data.message || 'Не удалось создать платёж');
             }
-
+    
             return response.data.url;
         } catch (error) {
             console.error('Ошибка при создании платежа:', error);
@@ -265,7 +269,8 @@ export class RukassaPayment {
                 console.error('Детали ошибки:', {
                     response: error.response?.data,
                     status: error.response?.status,
-                    headers: error.response?.headers
+                    headers: error.response?.headers,
+                    message: error.message
                 });
             }
             await this.pool.query(
