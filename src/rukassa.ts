@@ -16,67 +16,67 @@ console.log('Initialization params:', {
     API_URL: RUKASSA_API_URL
 });
 
-// Поддерживаемые валюты и методы оплаты
+// Интерфейсы
 interface Price {
     [key: string]: number;
-    RUB: number;   // CARD для RUB
-    KZT: number;   // CARD_KZT для Казахстана
-    UZS: number;   // CARD_UZS для Узбекистана
-    CRYPTO: number; // CRYPTO для криптовалют
+    RUB: number;
+    USD: number;
+    UZS: number;
+    KZT: number;
 }
 
-type SupportedCurrency = 'RUB' | 'KZT' | 'UZS' | 'CRYPTO';
+type SupportedCurrency = 'RUB' | 'USD' | 'UZS' | 'KZT';
+
+interface PaymentPackage {
+    id: number;
+    credits: number;
+    prices: Price;
+    description: string;
+}
+
+interface RukassaCreatePaymentResponse {
+    status: boolean;
+    error?: string;
+    url?: string;
+    order_id?: string;
+    message?: string;
+}
+
+interface RukassaWebhookBody {
+    shop_id: string;
+    amount: string;
+    order_id: string;
+    payment_status: string;
+    payment_method: string;
+    custom_fields: string;
+    merchant_order_id: string;
+    sign: string;
+}
 
 interface Currency {
     code: SupportedCurrency;
     symbol: string;
     name: string;
-    method: string; // Код метода оплаты
-    minAmount: number; // Минимальная сумма для метода
 }
 
-// Обновленные поддерживаемые валюты с методами оплаты
+// Поддерживаемые валюты
 const SUPPORTED_CURRENCIES: Currency[] = [
-    { 
-        code: 'RUB', 
-        symbol: '₽', 
-        name: 'Рубли', 
-        method: 'CARD',
-        minAmount: 300 // Минимум 300 рублей
-    },
-    { 
-        code: 'KZT', 
-        symbol: '₸', 
-        name: 'Тенге', 
-        method: 'CARD_KZT',
-        minAmount: 550 // Минимум 550 тенге
-    },
-    { 
-        code: 'UZS', 
-        symbol: 'сум', 
-        name: 'Сум', 
-        method: 'CARD_UZS',
-        minAmount: 6350 // Минимум 6350 сум
-    },
-    { 
-        code: 'CRYPTO', 
-        symbol: 'USDT', 
-        name: 'Криптовалюта', 
-        method: 'CRYPTO',
-        minAmount: 1.00 // Минимум 1 USDT
-    }
+    { code: 'RUB', symbol: '₽', name: 'Рубли' },
+    { code: 'USD', symbol: '$', name: 'Доллары' },
+    { code: 'UZS', symbol: 'сум', name: 'Сум' },
+    { code: 'KZT', symbol: '₸', name: 'Тенге' }
 ];
 
-// Обновленные пакеты с учетом минимальных сумм
+// Пакеты кредитов
 const CREDIT_PACKAGES: PaymentPackage[] = [
     {
         id: 1,
         credits: 1,
         prices: {
-            RUB: 300,     // Минимум 300₽
-            KZT: 550,     // Минимум 550₸
-            UZS: 6350,    // Минимум 6350 сум
-            CRYPTO: 1.00  // Минимум 1 USDT
+            RUB: 100,
+            USD: 1.1,
+            UZS: 13000,
+            KZT: 450
         },
         description: '1 генерация'
     },
@@ -84,10 +84,10 @@ const CREDIT_PACKAGES: PaymentPackage[] = [
         id: 2,
         credits: 3,
         prices: {
-            RUB: 600,     // 600₽
-            KZT: 1100,    // 1100₸
-            UZS: 12700,   // 12700 сум
-            CRYPTO: 2.00  // 2 USDT
+            RUB: 200,
+            USD: 2.2,
+            UZS: 26000,
+            KZT: 900
         },
         description: '3 генерации'
     },
@@ -95,70 +95,123 @@ const CREDIT_PACKAGES: PaymentPackage[] = [
         id: 3,
         credits: 10,
         prices: {
-            RUB: 1500,    // 1500₽
-            KZT: 2750,    // 2750₸
-            UZS: 31750,   // 31750 сум
-            CRYPTO: 5.00  // 5 USDT
+            RUB: 500,
+            USD: 5.5,
+            UZS: 65000,
+            KZT: 2250
         },
         description: '10 генераций'
     }
 ];
 
-// Обновляем метод createPayment с учетом методов оплаты
-async createPayment(userId: number, packageId: number, currency: SupportedCurrency = 'RUB'): Promise<string> {
-    const package_ = CREDIT_PACKAGES.find(p => p.id === packageId);
-    if (!package_) {
-        throw new Error('Неверный ID пакета');
+export class RukassaPayment {
+    private pool: Pool;
+    private bot: Telegraf;
+
+    constructor(pool: Pool, bot: Telegraf) {
+        this.pool = pool;
+        this.bot = bot;
     }
 
-    const curr = SUPPORTED_CURRENCIES.find(c => c.code === currency);
-    if (!curr) {
-        throw new Error('Неподдерживаемая валюта');
-    }
+    async initPaymentsTable(): Promise<void> {
+        const client = await this.pool.connect();
+        try {
+            await client.query('BEGIN');
 
-    const merchantOrderId = `${userId}_${Date.now()}`;
-    const amount = package_.prices[currency].toString();
-    
-    try {
-        await this.pool.query(
-            'INSERT INTO payments (user_id, merchant_order_id, amount, credits, status, currency) VALUES ($1, $2, $3, $4, $5, $6)',
-            [userId, merchantOrderId, parseFloat(amount), package_.credits, 'pending', currency]
-        );
+            // Проверяем существование таблицы
+            const tableExists = await client.query(`
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables 
+                    WHERE table_name = 'payments'
+                );
+            `);
 
-        const paymentData = {
-            shop_id: SHOP_ID,
-            token: TOKEN,
-            order_id: merchantOrderId,
-            amount: amount,
-            currency: currency,
-            method: curr.method // Добавляем метод оплаты
-        };
-
-        console.log('Request details:', {
-            url: RUKASSA_API_URL,
-            data: paymentData,
-            shop_id: SHOP_ID,
-            token_prefix: TOKEN.substring(0, 5) + '...'
-        });
-
-        const response = await axios.post<RukassaCreatePaymentResponse>(
-            RUKASSA_API_URL,
-            paymentData,
-            {
-                headers: {
-                    'Content-Type': 'application/json'
-                }
+            if (tableExists.rows[0].exists) {
+                // Если таблица существует, удаляем ее
+                await client.query('DROP TABLE IF EXISTS payments CASCADE;');
             }
-        );
 
-        console.log('Ответ Rukassa:', response.data);
+            // Создаем таблицу с новой структурой
+            await client.query(`
+                CREATE TABLE payments (
+                    id SERIAL PRIMARY KEY,
+                    user_id BIGINT REFERENCES users(user_id),
+                    order_id TEXT UNIQUE,
+                    merchant_order_id TEXT UNIQUE,
+                    amount DECIMAL,
+                    credits INTEGER,
+                    status TEXT,
+                    currency TEXT,
+                    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+                );
+            `);
 
-        if (!response.data.url) {
-            console.error('Ошибка ответа Rukassa:', response.data);
-            throw new Error(response.data.message || 'Не удалось создать платёж');
+            await client.query('COMMIT');
+            console.log('Таблица payments успешно создана/обновлена');
+        } catch (error) {
+            await client.query('ROLLBACK');
+            console.error('Ошибка при создании таблицы payments:', error);
+            throw error;
+        } finally {
+            client.release();
         }
+    }
 
-        return response.data.url;
+    async createPayment(userId: number, packageId: number, currency: SupportedCurrency = 'RUB'): Promise<string> {
+        const package_ = CREDIT_PACKAGES.find(p => p.id === packageId);
+        if (!package_) {
+            throw new Error('Неверный ID пакета');
+        }
+    
+        const merchantOrderId = `${userId}_${Date.now()}`;
+        const amount = package_.prices[currency].toString();
+        
+        try {
+            await this.pool.query(
+                'INSERT INTO payments (user_id, merchant_order_id, amount, credits, status, currency) VALUES ($1, $2, $3, $4, $5, $6)',
+                [userId, merchantOrderId, parseFloat(amount), package_.credits, 'pending', currency]
+            );
+    
+            // Базовые параметры как в PHP примере
+            const paymentData = new URLSearchParams({
+                shop_id: SHOP_ID,
+                token: TOKEN,
+                order_id: merchantOrderId,
+                amount: amount,
+                user_code: userId.toString(), // Добавили user_code
+                success_url: 'https://t.me/photowombot',
+                fail_url: 'https://t.me/photowombot',
+                method: 'all'
+            });
+    
+            console.log('Request details:', {
+                url: RUKASSA_API_URL,
+                data: Object.fromEntries(paymentData),
+                shop_id: SHOP_ID,
+                token_prefix: TOKEN.substring(0, 5) + '...'
+            });
+    
+            const response = await axios.post<RukassaCreatePaymentResponse>(
+                RUKASSA_API_URL,
+                paymentData,
+                {
+                    headers: {
+                        'Content-Type': 'application/x-www-form-urlencoded'
+                    }
+                }
+            );
+    
+            console.log('Ответ Rukassa:', response.data);
+    
+            if (!response.data.url) {
+                console.error('Ошибка ответа Rukassa:', response.data);
+                throw new Error(response.data.message || 'Не удалось создать платёж');
+            }
+    
+            // Добавляем параметры в URL как в PHP примере
+            const paymentUrl = `${response.data.url}`;
+            return paymentUrl;
     
         } catch (error) {
             console.error('Ошибка при создании платежа:', error);
@@ -309,7 +362,7 @@ export function setupPaymentCommands(bot: Telegraf, pool: Pool): void {
             } catch {}
             console.error('Ошибка при обработке платежа:', error);
             await ctx.reply('❌ Произошла ошибка при создании платежа. Попробуйте позже.');
-        }   
+        }
     });
 }
 
