@@ -5,8 +5,8 @@ import { Pool } from 'pg';
 import express from 'express';
 
 // Конфигурация Rukassa
-const RUKASSA_SHOP_ID = process.env.RUKASSA_SHOP_ID || '';
-const RUKASSA_SECRET_KEY = process.env.RUKASSA_SECRET_KEY || '';
+const SHOP_ID = process.env.SHOP_ID || '';
+const TOKEN = process.env.TOKEN || '';
 const RUKASSA_API_URL = 'https://lk.rukassa.pro';
 
 // Интерфейсы
@@ -154,7 +154,7 @@ export class RukassaPayment {
     private generateSign(params: Record<string, string>): string {
         const sortedKeys = Object.keys(params).sort();
         const values = sortedKeys.map(key => params[key]).join('|');
-        const signString = `${values}|${RUKASSA_SECRET_KEY}`;
+        const signString = `${values}|${TOKEN}`;
         console.log('Строка для подписи:', signString);
         return crypto
             .createHash('md5')
@@ -189,7 +189,7 @@ export class RukassaPayment {
         if (!package_) {
             throw new Error('Неверный ID пакета');
         }
-    
+
         const merchantOrderId = `${userId}_${Date.now()}`;
         const amount = package_.prices[currency].toString();
         
@@ -198,20 +198,20 @@ export class RukassaPayment {
                 'INSERT INTO payments (user_id, merchant_order_id, amount, credits, status, currency) VALUES ($1, $2, $3, $4, $5, $6)',
                 [userId, merchantOrderId, parseFloat(amount), package_.credits, 'pending', currency]
             );
-    
+
             // Генерируем подпись
             const signParams = {
                 amount: amount,
                 currency: currency,
                 order_id: merchantOrderId,
-                shop_id: RUKASSA_SHOP_ID
+                shop_id: SHOP_ID
             };
             
             const sign = this.generateSign(signParams);
-    
+
             // Данные для платежа
             const paymentData = {
-                shop_id: RUKASSA_SHOP_ID,
+                shop_id: SHOP_ID,
                 order_id: merchantOrderId,
                 amount: amount,
                 currency: currency,
@@ -229,13 +229,14 @@ export class RukassaPayment {
                     description: package_.description 
                 })
             };
-    
+
             console.log('Request details:', {
                 url: `${RUKASSA_API_URL}/api/v1/create`,
                 data: paymentData,
-                token_prefix: RUKASSA_SECRET_KEY.substring(0, 5)
+                shop_id: SHOP_ID,
+                token_prefix: TOKEN.substring(0, 5)
             });
-    
+
             const response = await axios.post<RukassaCreatePaymentResponse>(
                 `${RUKASSA_API_URL}/api/v1/create`,
                 paymentData,
@@ -243,21 +244,21 @@ export class RukassaPayment {
                     headers: {
                         'Accept': 'application/json',
                         'Content-Type': 'application/json',
-                        'Token': RUKASSA_SECRET_KEY
+                        'Token': TOKEN
                     },
                     timeout: 30000,
                     maxRedirects: 5,
                     validateStatus: (status) => status >= 200 && status < 500
                 }
             );
-    
+
             console.log('Ответ Rukassa:', response.data);
-    
+
             if (!response.data.url) {
                 console.error('Ошибка ответа Rukassa:', response.data);
                 throw new Error(response.data.message || 'Не удалось создать платёж');
             }
-    
+
             return response.data.url;
         } catch (error) {
             console.error('Ошибка при создании платежа:', error);
