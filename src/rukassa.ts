@@ -7,7 +7,7 @@ import express from 'express';
 // Конфигурация Rukassa
 const SHOP_ID = process.env.SHOP_ID || '';
 const TOKEN = process.env.TOKEN || '';
-const RUKASSA_API_URL = 'https://lk.rukassa.pro';
+const RUKASSA_API_URL = 'https://api.rukassa.pro';
 
 // Выводим параметры для проверки
 console.log('Initialization params:', {
@@ -206,34 +206,20 @@ export class RukassaPayment {
                 [userId, merchantOrderId, parseFloat(amount), package_.credits, 'pending', currency]
             );
 
-            // Генерируем подпись
-            const signParams = {
-                amount: amount,
-                currency: currency,
-                order_id: merchantOrderId,
-                shop_id: SHOP_ID
-            };
-            
-            const sign = this.generateSign(signParams);
-
-            // Данные для платежа
+            // Подготавливаем базовые параметры
             const paymentData = {
+                amount,
+                currency,
                 shop_id: SHOP_ID,
-                order_id: merchantOrderId,
-                amount: amount,
-                currency: currency,
                 token: TOKEN,
-                receipt_items: [{
-                    name: package_.description,
-                    count: 1,
-                    price: parseFloat(amount)
-                }],
+                order_id: merchantOrderId,
+                test: 1,
+                desc: package_.description,
                 notify_url: 'https://nudebot-production.up.railway.app/rukassa/webhook',
                 success_url: 'https://t.me/photowombot',
                 fail_url: 'https://t.me/photowombot',
                 custom_fields: JSON.stringify({ 
-                    credits: package_.credits,
-                    description: package_.description 
+                    credits: package_.credits
                 })
             };
 
@@ -242,7 +228,8 @@ export class RukassaPayment {
                 data: {
                     ...paymentData,
                     token: TOKEN.substring(0, 5) + '...'
-                }
+                },
+                shop_id: SHOP_ID
             });
 
             const response = await axios.post<RukassaCreatePaymentResponse>(
@@ -252,10 +239,7 @@ export class RukassaPayment {
                     headers: {
                         'Accept': 'application/json',
                         'Content-Type': 'application/json'
-                    },
-                    timeout: 30000,
-                    maxRedirects: 5,
-                    validateStatus: (status) => status >= 200 && status < 500
+                    }
                 }
             );
 
@@ -424,4 +408,4 @@ export function setupRukassaWebhook(app: express.Express, rukassaPayment: Rukass
             });
         }
     });
- }
+}
