@@ -163,7 +163,7 @@ export class RukassaPayment {
         if (!package_) {
             throw new Error('Неверный ID пакета');
         }
-
+    
         const merchantOrderId = `${userId}_${Date.now()}`;
         const amount = package_.prices[currency].toString();
         
@@ -172,22 +172,26 @@ export class RukassaPayment {
                 'INSERT INTO payments (user_id, merchant_order_id, amount, credits, status, currency) VALUES ($1, $2, $3, $4, $5, $6)',
                 [userId, merchantOrderId, parseFloat(amount), package_.credits, 'pending', currency]
             );
-
-            // Минимальный набор параметров как в PHP примере
+    
+            // Базовые параметры как в PHP примере
             const paymentData = new URLSearchParams({
                 shop_id: SHOP_ID,
                 token: TOKEN,
                 order_id: merchantOrderId,
-                amount: amount
+                amount: amount,
+                user_code: userId.toString(), // Добавили user_code
+                success_url: 'https://t.me/photowombot',
+                fail_url: 'https://t.me/photowombot',
+                method: 'all'
             });
-
+    
             console.log('Request details:', {
                 url: RUKASSA_API_URL,
                 data: Object.fromEntries(paymentData),
                 shop_id: SHOP_ID,
                 token_prefix: TOKEN.substring(0, 5) + '...'
             });
-
+    
             const response = await axios.post<RukassaCreatePaymentResponse>(
                 RUKASSA_API_URL,
                 paymentData,
@@ -197,18 +201,18 @@ export class RukassaPayment {
                     }
                 }
             );
-
+    
             console.log('Ответ Rukassa:', response.data);
-
+    
             if (!response.data.url) {
                 console.error('Ошибка ответа Rukassa:', response.data);
                 throw new Error(response.data.message || 'Не удалось создать платёж');
             }
-
-            // Добавляем параметры пользователя в URL
-            const paymentUrl = `${response.data.url}&user_id=${userId}&credits=${package_.credits}`;
+    
+            // Добавляем параметры в URL как в PHP примере
+            const paymentUrl = `${response.data.url}`;
             return paymentUrl;
-
+    
         } catch (error) {
             console.error('Ошибка при создании платежа:', error);
             if (axios.isAxiosError(error)) {
