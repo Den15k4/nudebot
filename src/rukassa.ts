@@ -110,7 +110,7 @@ export class RukassaPayment {
         const client = await this.pool.connect();
         try {
             await client.query('BEGIN');
-    
+
             // Проверяем существование таблицы
             const tableExists = await client.query(`
                 SELECT EXISTS (
@@ -118,12 +118,12 @@ export class RukassaPayment {
                     WHERE table_name = 'payments'
                 );
             `);
-    
+
             if (tableExists.rows[0].exists) {
                 // Если таблица существует, удаляем ее
                 await client.query('DROP TABLE IF EXISTS payments CASCADE;');
             }
-    
+
             // Создаем таблицу с новой структурой
             await client.query(`
                 CREATE TABLE payments (
@@ -139,7 +139,7 @@ export class RukassaPayment {
                     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
                 );
             `);
-    
+
             await client.query('COMMIT');
             console.log('Таблица payments успешно создана/обновлена');
         } catch (error) {
@@ -153,8 +153,8 @@ export class RukassaPayment {
 
     private generateSign(params: Record<string, string>): string {
         const sortedKeys = Object.keys(params).sort();
-        const values = sortedKeys.map(key => params[key]).join('|');
-        const signString = `${values}|${RUKASSA_SECRET_KEY}`;
+        const values = sortedKeys.map(key => params[key]).join(':');
+        const signString = `${values}:${RUKASSA_SECRET_KEY}`;
         console.log('Строка для подписи:', signString);
         return crypto
             .createHash('md5')
@@ -199,11 +199,20 @@ export class RukassaPayment {
                 [userId, merchantOrderId, parseFloat(amount), package_.credits, 'pending', currency]
             );
 
-            const paymentData = {
-                shop_id: RUKASSA_SHOP_ID,
+            // Базовые параметры для подписи
+            const signParams = {
                 order_id: merchantOrderId,
                 amount: amount,
                 currency: currency,
+                shop_id: RUKASSA_SHOP_ID
+            };
+
+            // Генерируем подпись
+            const sign = this.generateSign(signParams);
+
+            // Данные для API
+            const paymentData = {
+                ...signParams,
                 receipt_items: [{
                     name: package_.description,
                     count: 1,
@@ -216,16 +225,11 @@ export class RukassaPayment {
                 fail_url: 'https://t.me/photowombot'
             };
 
-            const signParamsString: Record<string, string> = {
-                shop_id: paymentData.shop_id,
-                amount: paymentData.amount,
-                order_id: paymentData.order_id,
-                currency: paymentData.currency
-            };
-
-            const sign = this.generateSign(signParamsString);
-
-            console.log('Создание платежа:', paymentData);
+            console.log('Создание платежа:', {
+                ...paymentData,
+                sign,
+                token: RUKASSA_SECRET_KEY.substring(0, 5) + '...'
+            });
 
             const response = await axios.post<RukassaCreatePaymentResponse>(
                 `${RUKASSA_API_URL}/api/v1/create`,
@@ -234,7 +238,7 @@ export class RukassaPayment {
                     headers: {
                         'Content-Type': 'application/json',
                         'Accept': 'application/json',
-                        'Authorization': `Bearer ${RUKASSA_SECRET_KEY}`,
+                        'Token': RUKASSA_SECRET_KEY,
                         'Sign': sign
                     },
                     timeout: 10000
@@ -244,6 +248,7 @@ export class RukassaPayment {
             console.log('Ответ Rukassa:', response.data);
 
             if (response.data.status !== 1 || !response.data.url) {
+                console.error('Ошибка ответа Rukassa:', response.data);
                 throw new Error(response.data.message || 'Не удалось создать платёж');
             }
 
@@ -253,7 +258,8 @@ export class RukassaPayment {
             if (axios.isAxiosError(error)) {
                 console.error('Детали ошибки:', {
                     response: error.response?.data,
-                    status: error.response?.status
+                    status: error.response?.status,
+                    headers: error.response?.headers
                 });
             }
             await this.pool.query(
