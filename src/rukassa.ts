@@ -6,7 +6,8 @@ import express from 'express';
 // Environment configuration
 const SHOP_ID = process.env.SHOP_ID || '2660';
 const TOKEN = process.env.TOKEN || '9876a82910927a2c9a43f34cb5ad2de7';
-const RUKASSA_API_URL = 'https://api.rukassa.pro/v1/create';
+const RUKASSA_API_URL = 'https://lk.rukassa.pro/api/v1/create';
+const WEBHOOK_URL = process.env.WEBHOOK_URL?.replace('/webhook', '') || 'https://nudebot-production.up.railway.app';
 
 // Interfaces
 interface Price {
@@ -38,6 +39,7 @@ interface RukassaCreatePaymentResponse {
     status: boolean;
     error?: string;
     url?: string;
+    link?: string;
     order_id?: string;
     message?: string;
 }
@@ -59,33 +61,32 @@ const SUPPORTED_CURRENCIES: Currency[] = [
         code: 'RUB', 
         symbol: '₽', 
         name: 'Рубли', 
-        method: 'CARD',
+        method: 'card',
         minAmount: 300
     },
     { 
         code: 'KZT', 
         symbol: '₸', 
         name: 'Тенге', 
-        method: 'CARD_KZT',
+        method: 'card_kzt',
         minAmount: 550
     },
     { 
         code: 'UZS', 
         symbol: 'сум', 
         name: 'Сум', 
-        method: 'CARD_UZS',
+        method: 'card_uzs',
         minAmount: 6350
     },
     { 
         code: 'CRYPTO', 
         symbol: 'USDT', 
         name: 'Криптовалюта', 
-        method: 'CRYPTO',
+        method: 'crypto',
         minAmount: 1.00
     }
 ];
 
-// Пакеты кредитов с учетом минимальных сумм
 const CREDIT_PACKAGES: PaymentPackage[] = [
     {
         id: 1,
@@ -187,37 +188,40 @@ export class RukassaPayment {
             );
 
             // Формируем данные для запроса
-            const formData = new URLSearchParams();
-            formData.append('shop_id', SHOP_ID);
-            formData.append('token', TOKEN);
-            formData.append('order_id', merchantOrderId);
-            formData.append('amount', amount);
-            formData.append('method', curr.method);
+            const requestData = {
+                shop_id: SHOP_ID,
+                payment_token: TOKEN,
+                order_id: merchantOrderId,
+                amount: amount,
+                method: curr.method,
+                currency: currency,
+                webhook_url: `${WEBHOOK_URL}/rukassa/webhook`
+            };
 
             console.log('Параметры запроса:', {
                 url: RUKASSA_API_URL,
-                data: Object.fromEntries(formData),
-                shop_id: SHOP_ID,
-                token_prefix: TOKEN.substring(0, 5) + '...'
+                data: { ...requestData, payment_token: '***hidden***' }
             });
 
             const response = await axios.post<RukassaCreatePaymentResponse>(
                 RUKASSA_API_URL,
-                formData,
+                requestData,
                 {
                     headers: {
-                        'Content-Type': 'application/x-www-form-urlencoded'
-                    }
+                        'Accept': 'application/json',
+                        'Content-Type': 'application/json'
+                    },
+                    timeout: 10000
                 }
             );
 
             console.log('Ответ Rukassa:', response.data);
 
-            if (!response.data.url) {
+            if (!response.data.url && !response.data.link) {
                 throw new Error(response.data.message || 'Не удалось создать платёж');
             }
 
-            return response.data.url;
+            return response.data.url || response.data.link || '';
 
         } catch (error) {
             console.error('Ошибка при создании платежа:', error);
@@ -229,13 +233,15 @@ export class RukassaPayment {
             ).catch(err => console.error('Ошибка при удалении платежа:', err));
             
             if (axios.isAxiosError(error)) {
-                console.error('Детали ошибки:', {
-                    response: error.response?.data,
-                    status: error.response?.status
+                const errorMessage = error.response?.data?.message || 'Сервис временно недоступен';
+                console.error('Детали ошибки API:', {
+                    status: error.response?.status,
+                    data: error.response?.data
                 });
+                throw new Error(`Ошибка оплаты: ${errorMessage}`);
             }
             
-            throw new Error('Не удалось создать платёж. Попробуйте позже.');
+            throw error;
         }
     }
 
