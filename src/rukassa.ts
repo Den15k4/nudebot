@@ -169,89 +169,99 @@ export class RukassaPayment {
 
     // Обновляем только метод createPayment, остальной код остается без изменений
 
-async createPayment(userId: number, packageId: number, currency: SupportedCurrency = 'RUB'): Promise<string> {
-    const package_ = CREDIT_PACKAGES.find(p => p.id === packageId);
-    if (!package_) {
-        throw new Error('Неверный ID пакета');
-    }
-
-    const curr = SUPPORTED_CURRENCIES.find(c => c.code === currency);
-    if (!curr) {
-        throw new Error('Неподдерживаемая валюта');
-    }
-
-    const merchantOrderId = `${userId}_${Date.now()}`;
-    const amount = package_.prices[currency].toString();
+    async createPayment(userId: number, packageId: number, currency: SupportedCurrency = 'RUB'): Promise<string> {
+        const package_ = CREDIT_PACKAGES.find(p => p.id === packageId);
+        if (!package_) {
+            throw new Error('Неверный ID пакета');
+        }
     
-    try {
-        await this.pool.query(
-            'INSERT INTO payments (user_id, merchant_order_id, amount, credits, status, currency) VALUES ($1, $2, $3, $4, $5, $6)',
-            [userId, merchantOrderId, parseFloat(amount), package_.credits, 'pending', currency]
-        );
-
-        // Формируем данные для запроса
-        const formData = new URLSearchParams();
-        formData.append('shop_id', SHOP_ID);
-        formData.append('token', TOKEN);  // Используем token вместо payment_token
-        formData.append('order_id', merchantOrderId);
-        formData.append('amount', amount);
-        formData.append('method', curr.method);
-        formData.append('currency_in', currency);  // Используем currency_in вместо currency
-        formData.append('webhook_url', `${WEBHOOK_URL}/rukassa/webhook`);
-
-        console.log('Параметры запроса:', {
-            url: RUKASSA_API_URL,
-            data: { 
-                ...Object.fromEntries(formData),
-                token: '***hidden***'
-            }
-        });
-
-        const response = await axios.post<RukassaCreatePaymentResponse>(
-            RUKASSA_API_URL,
-            formData,
-            {
-                headers: {
-                    'Accept': 'application/json',
-                    'Content-Type': 'application/x-www-form-urlencoded'  // Изменен тип контента
-                },
-                timeout: 10000
-            }
-        );
-
-        console.log('Ответ Rukassa:', response.data);
-
-        if (response.data.error) {
-            throw new Error(response.data.message || response.data.error);
+        const curr = SUPPORTED_CURRENCIES.find(c => c.code === currency);
+        if (!curr) {
+            throw new Error('Неподдерживаемая валюта');
         }
-
-        if (!response.data.url && !response.data.link) {
-            throw new Error('Не удалось получить ссылку на оплату');
-        }
-
-        return response.data.url || response.data.link || '';
-
-    } catch (error) {
-        console.error('Ошибка при создании платежа:', error);
+    
+        const merchantOrderId = `${userId}_${Date.now()}`;
+        const amount = package_.prices[currency].toString();
         
-        // Удаляем неудачный платёж из базы
-        await this.pool.query(
-            'DELETE FROM payments WHERE merchant_order_id = $1',
-            [merchantOrderId]
-        ).catch(err => console.error('Ошибка при удалении платежа:', err));
-        
-        if (axios.isAxiosError(error)) {
-            const errorMessage = error.response?.data?.message || error.response?.data?.error || 'Сервис временно недоступен';
-            console.error('Детали ошибки API:', {
-                status: error.response?.status,
-                data: error.response?.data
+        try {
+            await this.pool.query(
+                'INSERT INTO payments (user_id, merchant_order_id, amount, credits, status, currency) VALUES ($1, $2, $3, $4, $5, $6)',
+                [userId, merchantOrderId, parseFloat(amount), package_.credits, 'pending', currency]
+            );
+    
+            // Формируем данные для запроса
+            const formData = new URLSearchParams();
+            formData.append('shop_id', SHOP_ID);
+            formData.append('token', TOKEN);
+            formData.append('order_id', merchantOrderId);
+            formData.append('amount', amount);
+            formData.append('method', curr.method);
+            formData.append('currency_in', currency);
+            formData.append('webhook_url', `${WEBHOOK_URL}/rukassa/webhook`);
+            formData.append('test', '1'); // Включаем тестовый режим
+    
+            // Добавляем тестовые данные для отладки
+            formData.append('custom_fields', JSON.stringify({
+                user_id: userId,
+                package_id: packageId,
+                test_payment: true
+            }));
+    
+            console.log('Параметры запроса:', {
+                url: RUKASSA_API_URL,
+                data: { 
+                    ...Object.fromEntries(formData),
+                    token: '***hidden***'
+                }
             });
-            throw new Error(`Ошибка оплаты: ${errorMessage}`);
+    
+            const response = await axios.post<RukassaCreatePaymentResponse>(
+                RUKASSA_API_URL,
+                formData,
+                {
+                    headers: {
+                        'Accept': 'application/json',
+                        'Content-Type': 'application/x-www-form-urlencoded'
+                    },
+                    timeout: 10000
+                }
+            );
+    
+            console.log('Ответ Rukassa:', response.data);
+    
+            if (response.data.error) {
+                throw new Error(response.data.message || response.data.error);
+            }
+    
+            if (!response.data.url && !response.data.link) {
+                throw new Error('Не удалось получить ссылку на оплату');
+            }
+    
+            // Сохраняем URL для тестирования
+            console.log('Тестовая ссылка на оплату:', response.data.url || response.data.link);
+    
+            return response.data.url || response.data.link || '';
+    
+        } catch (error) {
+            console.error('Ошибка при создании платежа:', error);
+            
+            await this.pool.query(
+                'DELETE FROM payments WHERE merchant_order_id = $1',
+                [merchantOrderId]
+            ).catch(err => console.error('Ошибка при удалении платежа:', err));
+            
+            if (axios.isAxiosError(error)) {
+                const errorMessage = error.response?.data?.message || error.response?.data?.error || 'Сервис временно недоступен';
+                console.error('Детали ошибки API:', {
+                    status: error.response?.status,
+                    data: error.response?.data
+                });
+                throw new Error(`Ошибка оплаты: ${errorMessage}`);
+            }
+            
+            throw error;
         }
-        
-        throw error;
     }
-}
 
     async handleWebhook(data: RukassaWebhookBody): Promise<void> {
         console.log('Получены данные webhook:', data);
