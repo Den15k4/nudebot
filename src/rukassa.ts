@@ -7,7 +7,7 @@ import express from 'express';
 // Конфигурация Rukassa
 const SHOP_ID = process.env.SHOP_ID || '';
 const TOKEN = process.env.TOKEN || '';
-const RUKASSA_API_URL = 'https://lk.rukassa.is/api/v1/create';
+const RUKASSA_API_URL = 'https://api.rukassa.pro/v1/create';
 
 // Выводим параметры для проверки
 console.log('Initialization params:', {
@@ -200,27 +200,27 @@ export class RukassaPayment {
                 [userId, merchantOrderId, parseFloat(amount), package_.credits, 'pending', currency]
             );
 
-            const paymentData = {
-                shop_id: SHOP_ID,
-                token: TOKEN,
-                order_id: merchantOrderId,
-                amount: amount,
-                method: curr.method
-            };
+            // Формируем данные как в PHP примере
+            const formData = new URLSearchParams();
+            formData.append('shop_id', SHOP_ID);
+            formData.append('token', TOKEN);
+            formData.append('order_id', merchantOrderId);
+            formData.append('amount', amount);
+            formData.append('method', curr.method);
 
             console.log('Request details:', {
                 url: RUKASSA_API_URL,
-                data: paymentData,
+                data: Object.fromEntries(formData),
                 shop_id: SHOP_ID,
                 token_prefix: TOKEN.substring(0, 5) + '...'
             });
 
             const response = await axios.post<RukassaCreatePaymentResponse>(
                 RUKASSA_API_URL,
-                paymentData,
+                formData,
                 {
                     headers: {
-                        'Content-Type': 'application/json'
+                        'Content-Type': 'application/x-www-form-urlencoded'
                     }
                 }
             );
