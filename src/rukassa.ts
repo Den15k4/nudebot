@@ -402,63 +402,65 @@ export function setupRukassaWebhook(app: express.Express, rukassaPayment: Rukass
             res.json({ status: 'success' });
         } catch (error) {
             console.error('Ошибка обработки webhook от Rukassa:', error);
-            res.status(500).json({
-            status: 'error',
-            message: error instanceof Error ? error.message : 'Unknown error'
+            res.status(500).json({ 
+                status: 'error',
+                message: error instanceof Error ? error.message : 'Unknown error'
             });
-            }
-            });
-            // Обработка редиректов после оплаты
-app.get('/payment/success', (req, res) => {
-    res.send(`
-        <html>
-            <head>
-                <title>Оплата успешна</title>
-                <meta charset="utf-8">
-                <meta name="viewport" content="width=device-width, initial-scale=1">
-            </head>
-            <body style="display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; font-family: Arial, sans-serif;">
-                <div style="text-align: center; padding: 20px;">
-                    <h1 style="color: #4CAF50;">✅ Оплата успешно завершена!</h1>
-                    <p>Вернитесь в Telegram бот для проверки баланса.</p>
-                </div>
-            </body>
-        </html>
-    `);
-});
+        }
+    });
 
-app.get('/payment/fail', (req, res) => {
-    res.send(`
-        <html>
-            <head>
-                <title>Ошибка оплаты</title>
-                <meta charset="utf-8">
-                <meta name="viewport" content="width=device-width, initial-scale=1">
-            </head>
-            <body style="display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; font-family: Arial, sans-serif;">
-                <div style="text-align: center; padding: 20px;">
-                    <h1 style="color: #f44336;">❌ Ошибка оплаты</h1>
-                    <p>Вернитесь в Telegram бот и попробуйте снова.</p>
-                </div>
-            </body>
-        </html>
-    `);
-});
+    // Обработка редиректов после оплаты
+    app.get('/payment/success', (req, res) => {
+        res.send(`
+            <html>
+                <head>
+                    <title>Оплата успешна</title>
+                    <meta charset="utf-8">
+                    <meta name="viewport" content="width=device-width, initial-scale=1">
+                </head>
+                <body style="display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; font-family: Arial, sans-serif;">
+                    <div style="text-align: center; padding: 20px;">
+                        <h1 style="color: #4CAF50;">✅ Оплата успешно завершена!</h1>
+                        <p>Вернитесь в Telegram бот для проверки баланса.</p>
+                    </div>
+                </body>
+            </html>
+        `);
+    });
 
-app.get('/payment/back', (req, res) => {
-    res.send(`
-        <html>
-            <head>
-                <title>Отмена оплаты</title>
-                <meta charset="utf-8">
-                <meta name="viewport" content="width=device-width, initial-scale=1">
-            </head>
-            <body style="display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; font-family: Arial, sans-serif;">
-                <div style="text-align: center; padding: 20px;">
-                    <h1 style="color: #2196F3;">↩️ Оплата отменена</h1>
-                    <p>Вернитесь в Telegram бот для создания нового платежа.</p>
-                </div>
-            </body>
-        </html>
-    `);
-});
+    app.get('/payment/fail', (req, res) => {
+        res.send(`
+            <html>
+                <head>
+                    <title>Ошибка оплаты</title>
+                    <meta charset="utf-8">
+                    <meta name="viewport" content="width=device-width, initial-scale=1">
+                </head>
+                <body style="display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; font-family: Arial, sans-serif;">
+                    <div style="text-align: center; padding: 20px;">
+                        <h1 style="color: #f44336;">❌ Ошибка оплаты</h1>
+                        <p>Вернитесь в Telegram бот и попробуйте снова.</p>
+                    </div>
+                </body>
+            </html>
+        `);
+    });
+
+    app.get('/payment/back', (req, res) => {
+        res.send(`
+            <html>
+                <head>
+                    <title>Отмена оплаты</title>
+                    <meta charset="utf-8">
+                    <meta name="viewport" content="width=device-width, initial-scale=1">
+                </head>
+                <body style="display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; font-family: Arial, sans-serif;">
+                    <div style="text-align: center; padding: 20px;">
+                        <h1 style="color: #2196F3;">↩️ Оплата отменена</h1>
+                        <p>Вернитесь в Telegram бот для создания нового платежа.</p>
+                    </div>
+                </body>
+            </html>
+        `);
+    });
+}
