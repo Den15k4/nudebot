@@ -136,11 +136,7 @@ export class RukassaPayment {
         const client = await this.pool.connect();
         try {
             await client.query('BEGIN');
-
-            // Drop existing table if exists
             await client.query('DROP TABLE IF EXISTS payments CASCADE;');
-
-            // Create new payments table
             await client.query(`
                 CREATE TABLE payments (
                     id SERIAL PRIMARY KEY,
@@ -155,7 +151,6 @@ export class RukassaPayment {
                     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
                 );
             `);
-
             await client.query('COMMIT');
             console.log('Таблица payments успешно создана');
         } catch (error) {
@@ -167,19 +162,17 @@ export class RukassaPayment {
         }
     }
 
-    // Обновляем только метод createPayment, остальной код остается без изменений
-
     async createPayment(userId: number, packageId: number, currency: SupportedCurrency = 'RUB'): Promise<string> {
         const package_ = CREDIT_PACKAGES.find(p => p.id === packageId);
         if (!package_) {
             throw new Error('Неверный ID пакета');
         }
-    
+
         const curr = SUPPORTED_CURRENCIES.find(c => c.code === currency);
         if (!curr) {
             throw new Error('Неподдерживаемая валюта');
         }
-    
+
         const merchantOrderId = `${userId}_${Date.now()}`;
         const amount = package_.prices[currency].toString();
         
@@ -188,8 +181,7 @@ export class RukassaPayment {
                 'INSERT INTO payments (user_id, merchant_order_id, amount, credits, status, currency) VALUES ($1, $2, $3, $4, $5, $6)',
                 [userId, merchantOrderId, parseFloat(amount), package_.credits, 'pending', currency]
             );
-    
-            // Формируем данные для запроса
+
             const formData = new URLSearchParams();
             formData.append('shop_id', SHOP_ID);
             formData.append('token', TOKEN);
@@ -199,14 +191,15 @@ export class RukassaPayment {
             formData.append('currency_in', currency);
             formData.append('webhook_url', `${WEBHOOK_URL}/rukassa/webhook`);
             formData.append('test', '1'); // Включаем тестовый режим
-    
-            // Добавляем тестовые данные для отладки
+            
+            // Добавляем тестовые данные
             formData.append('custom_fields', JSON.stringify({
                 user_id: userId,
                 package_id: packageId,
+                credits: package_.credits,
                 test_payment: true
             }));
-    
+
             console.log('Параметры запроса:', {
                 url: RUKASSA_API_URL,
                 data: { 
@@ -214,7 +207,7 @@ export class RukassaPayment {
                     token: '***hidden***'
                 }
             });
-    
+
             const response = await axios.post<RukassaCreatePaymentResponse>(
                 RUKASSA_API_URL,
                 formData,
@@ -226,22 +219,20 @@ export class RukassaPayment {
                     timeout: 10000
                 }
             );
-    
+
             console.log('Ответ Rukassa:', response.data);
-    
+
             if (response.data.error) {
                 throw new Error(response.data.message || response.data.error);
             }
-    
+
             if (!response.data.url && !response.data.link) {
                 throw new Error('Не удалось получить ссылку на оплату');
             }
-    
-            // Сохраняем URL для тестирования
-            console.log('Тестовая ссылка на оплату:', response.data.url || response.data.link);
-    
+
+            console.log(`Создан тестовый платеж для пользователя ${userId}, заказ ${merchantOrderId}`);
             return response.data.url || response.data.link || '';
-    
+
         } catch (error) {
             console.error('Ошибка при создании платежа:', error);
             
@@ -270,7 +261,6 @@ export class RukassaPayment {
         try {
             await client.query('BEGIN');
 
-            // Обновляем статус платежа
             const paymentResult = await client.query(
                 'UPDATE payments SET status = $1, order_id = $2, updated_at = CURRENT_TIMESTAMP WHERE merchant_order_id = $3 RETURNING user_id, credits, currency, amount',
                 [data.payment_status, data.order_id, data.merchant_order_id]
@@ -283,18 +273,17 @@ export class RukassaPayment {
             const { user_id, credits, currency, amount } = paymentResult.rows[0];
 
             if (data.payment_status === 'paid') {
-                // Начисляем кредиты пользователю
                 await client.query(
                     'UPDATE users SET credits = credits + $1 WHERE user_id = $2',
                     [credits, user_id]
                 );
 
-                // Отправляем уведомление пользователю
                 const curr = SUPPORTED_CURRENCIES.find(c => c.code === currency);
                 await this.bot.telegram.sendMessage(
                     user_id,
                     `✅ Оплата ${amount} ${curr?.symbol || currency} успешно получена!\n` +
-                    `На ваш счет зачислено ${credits} кредитов.`
+                    `На ваш счет зачислено ${credits} кредитов.\n\n` +
+                    (data.custom_fields?.includes('test_payment') ? '🔧 Тестовый платеж' : '')
                 );
             } else if (data.payment_status === 'failed') {
                 await this.bot.telegram.sendMessage(
@@ -304,6 +293,7 @@ export class RukassaPayment {
             }
 
             await client.query('COMMIT');
+            console.log(`Webhook обработан успешно: статус=${data.payment_status}, пользователь=${user_id}`);
         } catch (error) {
             await client.query('ROLLBACK');
             console.error('Ошибка при обработке webhook:', error);
@@ -381,6 +371,10 @@ export function setupPaymentCommands(bot: Telegraf, pool: Pool): void {
             await ctx.reply(
                 `🔄 Для оплаты ${package_?.description} (${package_?.prices[currency]} ${curr?.symbol}) перейдите по ссылке:\n` +
                 `${paymentUrl}\n\n` +
+                '🔧 Тестовый режим активен\n' +
+                'Тестовая карта: 4111 1111 1111 1111\n' +
+                'Срок действия: 12/25\n' +
+                'CVV: 123\n\n' +
                 'После оплаты кредиты будут автоматически зачислены на ваш счет.',
                 { disable_web_page_preview: true }
             );
@@ -394,8 +388,13 @@ export function setupPaymentCommands(bot: Telegraf, pool: Pool): void {
 export function setupRukassaWebhook(app: express.Express, rukassaPayment: RukassaPayment): void {
     app.post('/rukassa/webhook', express.json(), async (req, res) => {
         try {
-            console.log('Получен webhook от Rukassa:', req.body);
+            console.log('Получен webhook от Rukassa:');
+            console.log('Headers:', req.headers);
+            console.log('Body:', JSON.stringify(req.body, null, 2));
+            
             await rukassaPayment.handleWebhook(req.body);
+            console.log('Webhook обработан успешно');
+            
             res.json({ status: 'success' });
         } catch (error) {
             console.error('Ошибка обработки webhook от Rukassa:', error);
