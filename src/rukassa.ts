@@ -185,19 +185,23 @@ export class RukassaPayment {
             const formData = new URLSearchParams();
             formData.append('shop_id', SHOP_ID);
             formData.append('token', TOKEN);
+            formData.append('user_code', userId.toString());
             formData.append('order_id', merchantOrderId);
             formData.append('amount', amount);
             formData.append('method', curr.method);
             formData.append('currency_in', currency);
             formData.append('webhook_url', `${WEBHOOK_URL}/rukassa/webhook`);
-            formData.append('test', '1'); // Включаем тестовый режим
+            formData.append('success_url', `${WEBHOOK_URL}/payment/success`);
+            formData.append('fail_url', `${WEBHOOK_URL}/payment/fail`);
+            formData.append('back_url', `${WEBHOOK_URL}/payment/back`);
+            formData.append('test', '1');
             
-            // Добавляем тестовые данные
             formData.append('custom_fields', JSON.stringify({
                 user_id: userId,
                 package_id: packageId,
                 credits: package_.credits,
-                test_payment: true
+                test_payment: true,
+                description: `${package_.description} для пользователя ${userId}`
             }));
 
             console.log('Параметры запроса:', {
@@ -398,10 +402,63 @@ export function setupRukassaWebhook(app: express.Express, rukassaPayment: Rukass
             res.json({ status: 'success' });
         } catch (error) {
             console.error('Ошибка обработки webhook от Rukassa:', error);
-            res.status(500).json({ 
-                status: 'error',
-                message: error instanceof Error ? error.message : 'Unknown error'
+            res.status(500).json({
+            status: 'error',
+            message: error instanceof Error ? error.message : 'Unknown error'
             });
-        }
-    });
-}
+            }
+            });
+            // Обработка редиректов после оплаты
+app.get('/payment/success', (req, res) => {
+    res.send(`
+        <html>
+            <head>
+                <title>Оплата успешна</title>
+                <meta charset="utf-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1">
+            </head>
+            <body style="display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; font-family: Arial, sans-serif;">
+                <div style="text-align: center; padding: 20px;">
+                    <h1 style="color: #4CAF50;">✅ Оплата успешно завершена!</h1>
+                    <p>Вернитесь в Telegram бот для проверки баланса.</p>
+                </div>
+            </body>
+        </html>
+    `);
+});
+
+app.get('/payment/fail', (req, res) => {
+    res.send(`
+        <html>
+            <head>
+                <title>Ошибка оплаты</title>
+                <meta charset="utf-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1">
+            </head>
+            <body style="display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; font-family: Arial, sans-serif;">
+                <div style="text-align: center; padding: 20px;">
+                    <h1 style="color: #f44336;">❌ Ошибка оплаты</h1>
+                    <p>Вернитесь в Telegram бот и попробуйте снова.</p>
+                </div>
+            </body>
+        </html>
+    `);
+});
+
+app.get('/payment/back', (req, res) => {
+    res.send(`
+        <html>
+            <head>
+                <title>Отмена оплаты</title>
+                <meta charset="utf-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1">
+            </head>
+            <body style="display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; font-family: Arial, sans-serif;">
+                <div style="text-align: center; padding: 20px;">
+                    <h1 style="color: #2196F3;">↩️ Оплата отменена</h1>
+                    <p>Вернитесь в Telegram бот для создания нового платежа.</p>
+                </div>
+            </body>
+        </html>
+    `);
+});
