@@ -42,6 +42,8 @@ interface RukassaCreatePaymentResponse {
     link?: string;
     order_id?: string;
     message?: string;
+    id?: number;
+    hash?: string;
 }
 
 interface RukassaWebhookBody {
@@ -60,21 +62,21 @@ const SUPPORTED_CURRENCIES: Currency[] = [
     { 
         code: 'RUB', 
         symbol: '₽', 
-        name: 'Рубли', 
+        name: 'Visa/MC (RUB)', 
         method: 'card',
         minAmount: 300
     },
     { 
         code: 'KZT', 
         symbol: '₸', 
-        name: 'Тенге', 
+        name: 'Visa/MC (KZT)', 
         method: 'card_kzt',
-        minAmount: 550
+        minAmount: 2750
     },
     { 
         code: 'UZS', 
         symbol: 'сум', 
-        name: 'Сум', 
+        name: 'Visa/MC (UZS)', 
         method: 'card_uzs',
         minAmount: 6350
     },
@@ -93,7 +95,7 @@ const CREDIT_PACKAGES: PaymentPackage[] = [
         credits: 1,
         prices: {
             RUB: 300,
-            KZT: 550,
+            KZT: 2750,
             UZS: 6350,
             CRYPTO: 1.00
         },
@@ -104,7 +106,7 @@ const CREDIT_PACKAGES: PaymentPackage[] = [
         credits: 3,
         prices: {
             RUB: 600,
-            KZT: 1100,
+            KZT: 5500,
             UZS: 12700,
             CRYPTO: 2.00
         },
@@ -115,7 +117,7 @@ const CREDIT_PACKAGES: PaymentPackage[] = [
         credits: 10,
         prices: {
             RUB: 1500,
-            KZT: 2750,
+            KZT: 14950,
             UZS: 31750,
             CRYPTO: 5.00
         },
@@ -194,13 +196,11 @@ export class RukassaPayment {
             formData.append('success_url', `${WEBHOOK_URL}/payment/success`);
             formData.append('fail_url', `${WEBHOOK_URL}/payment/fail`);
             formData.append('back_url', `${WEBHOOK_URL}/payment/back`);
-            formData.append('test', '1');
             
             formData.append('custom_fields', JSON.stringify({
                 user_id: userId,
                 package_id: packageId,
                 credits: package_.credits,
-                test_payment: true,
                 description: `${package_.description} для пользователя ${userId}`
             }));
 
@@ -230,12 +230,13 @@ export class RukassaPayment {
                 throw new Error(response.data.message || response.data.error);
             }
 
-            if (!response.data.url && !response.data.link) {
+            const paymentUrl = response.data.url || response.data.link;
+            if (!paymentUrl) {
                 throw new Error('Не удалось получить ссылку на оплату');
             }
 
-            console.log(`Создан тестовый платеж для пользователя ${userId}, заказ ${merchantOrderId}`);
-            return response.data.url || response.data.link || '';
+            console.log(`Создан платеж для пользователя ${userId}, заказ ${merchantOrderId}`);
+            return paymentUrl;
 
         } catch (error) {
             console.error('Ошибка при создании платежа:', error);
@@ -286,8 +287,7 @@ export class RukassaPayment {
                 await this.bot.telegram.sendMessage(
                     user_id,
                     `✅ Оплата ${amount} ${curr?.symbol || currency} успешно получена!\n` +
-                    `На ваш счет зачислено ${credits} кредитов.\n\n` +
-                    (data.custom_fields?.includes('test_payment') ? '🔧 Тестовый платеж' : '')
+                    `На ваш счет зачислено ${credits} кредитов.`
                 );
             } else if (data.payment_status === 'failed') {
                 await this.bot.telegram.sendMessage(
@@ -311,9 +311,9 @@ export class RukassaPayment {
 export function setupPaymentCommands(bot: Telegraf, pool: Pool): void {
     bot.command('buy', async (ctx) => {
         const keyboard = Markup.inlineKeyboard([
-            [Markup.button.callback('🇷🇺 Рубли (карта)', 'currency_RUB')],
-            [Markup.button.callback('🇰🇿 Тенге (карта)', 'currency_KZT')],
-            [Markup.button.callback('🇺🇿 Сум (карта)', 'currency_UZS')],
+            [Markup.button.callback('💳 Visa/MC (RUB)', 'currency_RUB')],
+            [Markup.button.callback('💳 Visa/MC (KZT)', 'currency_KZT')],
+            [Markup.button.callback('💳 Visa/MC (UZS)', 'currency_UZS')],
             [Markup.button.callback('💎 Криптовалюта', 'currency_CRYPTO')]
         ]);
 
@@ -375,10 +375,6 @@ export function setupPaymentCommands(bot: Telegraf, pool: Pool): void {
             await ctx.reply(
                 `🔄 Для оплаты ${package_?.description} (${package_?.prices[currency]} ${curr?.symbol}) перейдите по ссылке:\n` +
                 `${paymentUrl}\n\n` +
-                '🔧 Тестовый режим активен\n' +
-                'Тестовая карта: 4111 1111 1111 1111\n' +
-                'Срок действия: 12/25\n' +
-                'CVV: 123\n\n' +
                 'После оплаты кредиты будут автоматически зачислены на ваш счет.',
                 { disable_web_page_preview: true }
             );
@@ -409,7 +405,6 @@ export function setupRukassaWebhook(app: express.Express, rukassaPayment: Rukass
         }
     });
 
-    // Обработка редиректов после оплаты
     app.get('/payment/success', (req, res) => {
         res.send(`
             <html>
@@ -462,5 +457,13 @@ export function setupRukassaWebhook(app: express.Express, rukassaPayment: Rukass
                 </body>
             </html>
         `);
+    });
+
+    app.get('/health', (req, res) => {
+        res.json({
+            status: 'ok',
+            timestamp: new Date().toISOString(),
+            webhook_url: `${WEBHOOK_URL}/rukassa/webhook`
+        });
     });
 }
