@@ -1,0 +1,275 @@
+Request details: {
+  url: 'https://api.rukassa.pro/v1/create';,
+  data: {
+    shop_id: '2660',
+    token: '9876a82910927a2c9a43f34cb5ad2de7',
+    order_id: '5711532015_1730089410377',
+    amount: '300',
+    method: 'CARD'
+  },
+  shop_id: '2660',
+  token_prefix: '9876a...'
+}
+Ответ Rukassa: 
+<!DOCTYPE html>
+<html lang="ru">
+
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<meta name="format-detection" content="telephone=no">
+	<title>RUKASSA - удобный прием платежей на сайте картами</title>
+	<meta name="description" content="Description site">
+	<link rel="shortcut icon" href="img/favicon.png">
+	<link rel="stylesheet" href="css/swiper.min.css">
+	<link rel="stylesheet" href="css/style.css?v=123">
+	
+<!-- SUPPORT -->
+	<a href="https://t.me/rukassasupport3"; target="_blank" style="text-align: center; position: fixed; z-index: 99999; right: 15px; bottom: 15px; border-radius: 8px; width: 160px; height: 30px; color: #333333; background-color: #fbfafd; box-shadow: 0 0 10px rgb(0 0 0 / 30%);">
+		<div style="display: inline-block; margin-right: 3px; width: 10px; height: 10px; border-radius: 8px; background-color: #1f89f8; background-image: -webkit-linear-gradient(left top,#3b99fc,#0479f5); background-image: linear-gradient(to right bottom,#3b99fc,#0479f5);"></div>
+		<div style="display: inline-block; font-size: 15px;">Нужна помощь?</div>
+	</a>
+<!-- /SUPPORT --></head>
+
+<body>
+	<div class="page">
+		<header class="header">
+			<div class="header__logo logo"><img src="img/logo.png" srcset="img/logo_2x.png 2x" alt=""></div>
+			<nav class="header__menu menu menu_top">
+				<div class="menu__body">
+					<a href="/" class="menu__item">Главная</a>
+					<a href="https://lk.rukassa.io/api/v1"; class="menu__item">Разработчикам</a>
+					<a href="https://lk.rukassa.io/main/faq"; class="menu__item">FAQ</a>
+					<a href="https://lk.rukassa.io/main/tariff"; class="menu__item">Тарифы</a>
+				</div>
+			</nav>
+			<div class="header__mobilemenu">
+				<div class="burger">
+					<div class="burger__icon">
+						<div class="burger__line burger__line_1"></div>
+						<div class="burger__line burger__line_2"></div>
+						<div class="burger__line burger__line_3"></div>
+					</div>
+				</div>
+			</div>
+			<div class="header__login">
+				<!--<a href="#" onClick="openPopup('#login'); return false">Войти</a> / <a href="#" onClick="openPopup('#register'); return false">Создать аккаунт</a>-->
+				<a href="https://lk.rukassa.io/account/login">;Войти</a> / <a href="https://lk.rukassa.io/account/register">;Создать аккаунт</a>
+			</div>
+		</header>
+		<section class="section main">
+			<div class="main__content">
+				<h1 class="main__title section__title">РуКасса - удобный инструмент приема платежей на сайт!</h1>
+			<div class="benefit__slider swiper">
+				<div class="swiper-wrapper">
+					<div class="benefit__item swiper-slide">
+						<div class="benefit__image">
+							<img src="img/benefit-img1.png" srcset="img/benefit-img1_2x.png 2x" alt="">
+						</div>
+						<div class="benefit__text">Быстрый вывод без заморозки. Вывод денежных средств в любой момент</div>
+					</div>
+					<div class="benefit__item swiper-slide">
+						<div class="benefit__image">
+							<img src="img/benefit-img2.png" srcset="img/benefit-img2_2x.png 2x" alt="">
+						</div>
+						<div class="benefit__text">Безопасные транзакции. Проактивная защита от мошенничества</div>
+					</div>
+					<div class="benefit__item swiper-slide">
+						<div class="benefit__image benefit__image_big">
+							<img src="img/benefit-img3.png" srcset="img/benefit-img3_2x.png 2x" alt="">
+						</div>
+						<div class="benefit__text">Принимайте оплату в один клик. Можно оплатить всеми популярными способами</div>
+					</div>
+					<div class="benefit__item swiper-slide">
+						<div class="benefit__image">
+							<img src="img/benefit-img4.png" srcset="img/benefit-img4_2x.png 2x" alt="">
+						</div>
+						<div class="benefit__text">Простой API и интеграция. Удобное подключение своего проекта</div>
+					</div>
+				</div>
+				<div class="swiper-button-prev"></div>
+  				<div class="swiper-button-next"></div>
+			 </div>
+			<div class="benefit__gradient-wrapper">
+				<div class="benefit__gradient gradient"></div>
+			</div>
+		</section>
+		<section class="section about">
+			<div class="about__arrow"></div>
+			<h2 class="about__title section__title">получать оплату от <br>клиентов стало просто</h2>
+			<div class="about__content">
+				<div class="about__item about__item_logo">
+					<div class="about__logo">
+						<img src="img/logo_gray.png" srcset="img/logo_gray_2x.png 2x" alt="">
+					</div>
+				</div>
+				<div class="about__item about__item_1">
+					<b>Приём платежей</b>
+					На сайте и в мобильном приложении
+				</div>
+				<div class="about__item about__item_2">
+					<b>Платёжные ссылки</b>
+					Отправить в соц. сетях или в мессенджерах
+				</div>
+				<div class="about__item about__item_3">
+					<b>Массовые выплаты</b>
+					Совершайте любое количество выводов вашим клиентам.
+				</div>
+				<div class="about__item about__item_4">
+					<b>В ногу со временем</b>
+					Прием и вывод платежей в криптовалюте. Совершайте любое количество выплат
+				</div>
+			</div>
+		</section>
+		<section class="section howitwork">
+			<div class="howitwork__content">
+				<h2 class="howitwork__title section__title">Как это работает</h2>
+				<ul class="howitwork__list">
+					<li>Создайте аккаунт RuKassa</li>
+					<li>Подключите сайт, телеграм бота или принимайте платежи по ссылке</li>
+					<li>Принимайте оплату и выводите на карты, электронные кошельки, в&nbsp;криптовалюту</li>
+				</ul>
+				<!--<button class="howitwork__button button" onClick="openPopup('#register')">Подключить</button>-->
+				<a href="https://lk.rukassa.io/account/register"; class="howitwork__button button">Подключить</a>
+			</div>
+					<!--<a href="#" class="footer__link">Правила платежной организации</a>-->
+					<a href="https://lk.rukassa.io/main/vacancy"; class="footer__link">Вакансии</a>
+				</div>
+			</div>
+			<div class="footer__copyright">2022-2024 Система приема платежей «RuKassa»</div>
+		</footer>
+		<div class="popup" id="login">
+			<div class="login">
+				<div class="login__image">
+					<img src="img/iPhone.png" srcset="img/iPhone_2x.png 2x" alt="">
+				</div>
+				<div class="login__content">
+					<div class="login__logo"><img src="img/logo_gray.png" srcset="img/logo_gray_2x.png 2x" alt=""></div>
+					<form action="#" class="login__form form">
+						<div class="form__title">Вход в Личный Кабинет</div>
+						<div class="form__body">
+							<input class="form__input" type="text" name="login" placeholder="Введите логин">
+							<input class="form__input" type="password" name="password" placeholder="Введите пароль">
+						</div>
+						<button type="submit" class="login__button button">Войти</button>
+					</form>
+					<div class="login__links">
+						У Вас нет аккаунта? <a href="https://lk.rukassa.io/account/register"; class="link">Зарегистрироваться</a> <br><a href="https://lk.rukassa.io/account/restore"; class="link">Забыли пароль?</a>
+					</div>
+				</div>
+			</div>
+		</div>
+		<div class="popup" id="register">
+			<div class="register">
+				<div class="register__gradient"><img src="img/thanks-gradient.svg" alt=""></div>
+				<div class="register__image">
+					<img src="img/iPhone.png" srcset="img/iPhone_2x.png 2x" alt="">
+				</div>
+				<div class="register__content">
+					<div class="register__logo"><img src="img/logo_gray.png" srcset="img/logo_gray_2x.png 2x" alt=""></div>
+					<form action="#" class="register__form form">
+						<div class="form__title">Регистрация</div>
+						<div class="form__body">
+							<input class="form__input" type="text" name="name" placeholder="Введите имя">
+							<input class="form__input" type="text" name="surname" placeholder="Введите фамилию">
+							<input class="form__input" type="email" name="email" placeholder="Введите Ваш e-mail">
+							<input class="form__input" type="text" name="telegram" placeholder="Введите Ваш телеграмм">
+							<input class="form__input" type="password" name="password" placeholder="Введите пароль">
+							<input class="form__input" type="password" name="password" placeholder="Повтор пароля">
+						</div>
+						<label class="register__checkbox form__checkbox">
+							<input class="form__checkbox-input" type="checkbox">
+							<span class="form__checkbox-check"></span> 
+							<span class="form__checkbox-text">Я принимаю условия <a href="https://lk.rukassa.io/application/public/docs/rukassa_oferta_v1.0.pdf">;договора оферты</a></span>
+						</label>
+						<button type="submit" class="register__button button">Зарегистрировать аккаунт</button>
+					</form>
+				</div>
+			</div>
+		</div>
+	</div>
+	
+	
+	<script src="js/jquery-3.4.1.min.js"></script>
+	<script src="js/swiper.min.js"></script>
+	<script src="js/popup.min.js"></script>
+	<script src="js/scroll-lock.min.js"></script>
+	<script src="js/script.js?v=123"></script>
+</body>
+
+</html>
+				<h1 class="main__title section__title">РуКасса - удобный инструмент приема платежей на сайт!</h1>
+				<div class="main__text">Принимайте оплату на сайте, в приложении, социальных сетях, мессенджерах или с помощью ссылки</div>
+				<div class="main__buttons">
+					<!--<button class="button" onClick="openPopup('#register')">Подключить</button>-->
+					<!--<button class="button button_transparent" onClick="openPopup('#login')">Войти</button>-->
+					<a href="https://lk.rukassa.io/account/register"; class="button">Подключить</a>
+					<a href="https://lk.rukassa.io/account/login"; class="button button_transparent">Войти</a>
+				</div>
+			</div>
+			<div class="main__image">
+				<img src="img/iPhone.png" srcset="img/iPhone_2x.png 2x" alt="">
+			</div>
+			<div class="main__gradient-wrapper">
+				<div class="main__gradient gradient"></div>
+			</div>
+		</section>
+		<section class="section benefit">
+			<h2 class="benefit__title section__title">почему мы</h2>
+			<div class="benefit__slider swiper">
+				<div class="swiper-wrapper">
+					<div class="benefit__item swiper-slide">
+						<div class="benefit__image">
+							<img src="img/benefit-img1.png" srcset="img/benefit-img1_2x.png 2x" alt="">
+						</div>
+						<div class="benefit__text">Быстрый вывод без заморозки. Вывод денежных средств в любой момент</div>
+					</div>
+					<div class="benefit__item swiper-slide">
+						<div class="benefit__image">
+							<img src="img/benefit-img2.png" srcset="img/benefit-img2_2x.png 2x" alt="">
+						</div>
+						<div class="benefit__text">Безопасные транзакции. Проактивная защита от мошенничества</div>
+					</div>
+					<div class="benefit__item swiper-slide">
+						<div class="benefit__image benefit__image_big">
+							<img src="img/benefit-img3.png" srcset="img/benefit-img3_2x.png 2x" alt="">
+						</div>
+						<div class="benefit__text">Принимайте оплату в один клик. Можно оплатить всеми популярными способами</div>
+					</div>
+					<div class="benefit__item swiper-slide">
+						<div class="benefit__image">
+							<img src="img/benefit-img4.png" srcset="img/benefit-img4_2x.png 2x" alt="">
+						</div>
+						<div class="benefit__text">Простой API и интеграция. Удобное подключение своего проекта</div>
+					</div>
+				</div>
+				<div class="swiper-button-prev"></div>
+  				<div class="swiper-button-next"></div>
+			 </div>
+			<div class="benefit__gradient-wrapper">
+				<div class="benefit__gradient gradient"></div>
+			</div>
+		</section>
+		<section class="section about">
+			<div class="about__arrow"></div>
+			<h2 class="about__title section__title">получать оплату от <br>клиентов стало просто</h2>
+			<div class="about__content">
+				<div class="about__item about__item_logo">
+					<div class="about__logo">
+						<img src="img/logo_gray.png" srcset="img/logo_gray_2x.png 2x" alt="">
+					</div>
+				</div>
+				<div class="about__item about__item_1">
+					<b>Приём платежей</b>
+					На сайте и в мобильном приложении
+				</div>
+				<div class="about__item about__item_2">
+					<b>Платёжные ссылки</b>
+					Отправить в соц. сетях или в мессенджерах
+				</div>
+				<div class="about__item about__item_3">
+					<b>Массовые выплаты</b>
+					Совершайте любое количество выводов вашим клиентам.
+				</div>
+.......
+
