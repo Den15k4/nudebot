@@ -3,12 +3,13 @@ import axios from 'axios';
 import { Pool } from 'pg';
 import express from 'express';
 
+// Основные конфигурационные параметры из переменных окружения
 const SHOP_ID = process.env.SHOP_ID || '2660';
 const TOKEN = process.env.TOKEN || '9876a82910927a2c9a43f34cb5ad2de7';
 const RUKASSA_API_URL = 'https://lk.rukassa.pro/api/v1/create';
 const WEBHOOK_URL = process.env.WEBHOOK_URL?.replace('/webhook', '') || 'https://nudebot-production.up.railway.app';
 
-// Interfaces
+// Интерфейс для ответа от API Rukassa при создании платежа
 interface RukassaCreatePaymentResponse {
     status: boolean;
     error?: string;
@@ -20,6 +21,7 @@ interface RukassaCreatePaymentResponse {
     order_id?: string;
 }
 
+// Интерфейс для данных, получаемых через webhook от Rukassa
 interface RukassaWebhookBody {
     shop_id: string;
     amount: string;
@@ -35,6 +37,7 @@ interface RukassaWebhookBody {
     test?: boolean;
 }
 
+// Интерфейс для цен в разных валютах
 interface Price {
     [key: string]: number;
     RUB: number;
@@ -43,8 +46,10 @@ interface Price {
     CRYPTO: number;
 }
 
+// Поддерживаемые валюты
 type SupportedCurrency = 'RUB' | 'KZT' | 'UZS' | 'CRYPTO';
 
+// Интерфейс для описания валюты и её параметров
 interface Currency {
     code: SupportedCurrency;
     symbol: string;
@@ -54,6 +59,7 @@ interface Currency {
     decimal_places: number;
 }
 
+// Интерфейс для пакетов кредитов
 interface PaymentPackage {
     id: number;
     credits: number;
@@ -61,7 +67,7 @@ interface PaymentPackage {
     description: string;
 }
 
-
+// Конфигурация поддерживаемых валют и методов оплаты
 const SUPPORTED_CURRENCIES: Currency[] = [
     { 
         code: 'RUB', 
@@ -69,23 +75,23 @@ const SUPPORTED_CURRENCIES: Currency[] = [
         name: 'Visa/MC (RUB)', 
         method: 'card',
         minAmount: 300,
-        decimal_places: 2
+        decimal_places: 0
     },
     { 
         code: 'KZT', 
         symbol: '₸', 
         name: 'Visa/MC (KZT)', 
         method: 'card_kzt',
-        minAmount: 1900,
-        decimal_places: 2
+        minAmount: 32500, // ≈650₽
+        decimal_places: 0
     },
     { 
         code: 'UZS', 
         symbol: 'сум', 
         name: 'Visa/MC (UZS)', 
         method: 'card_uzs',
-        minAmount: 6350,
-        decimal_places: 2
+        minAmount: 86000, // ≈650₽
+        decimal_places: 0
     },
     { 
         code: 'CRYPTO', 
@@ -97,39 +103,52 @@ const SUPPORTED_CURRENCIES: Currency[] = [
     }
 ];
 
+// Пакеты кредитов с ценами для каждой валюты
 const CREDIT_PACKAGES: PaymentPackage[] = [
+    // Базовые пакеты (RUB и CRYPTO)
     {
         id: 1,
-        credits: 1,
-        prices: {
-            RUB: 300,
-            KZT: 1900,
-            UZS: 6350,
-            CRYPTO: 3
-        },
-        description: '1 генерация'
-    },
-    {
-        id: 2,
         credits: 3,
         prices: {
-            RUB: 600,
-            KZT: 3800,
-            UZS: 12700,
-            CRYPTO: 6
+            RUB: 300,      // 100₽ за генерацию
+            KZT: 32500,    // Недоступно, мин. сумма
+            UZS: 86000,    // Недоступно, мин. сумма
+            CRYPTO: 3.00   // ~100₽ за генерацию
         },
         description: '3 генерации'
     },
     {
-        id: 3,
-        credits: 10,
+        id: 2,
+        credits: 7,
         prices: {
-            RUB: 1200,
-            KZT: 7600,
-            UZS: 31750,
-            CRYPTO: 12
+            RUB: 600,      // ~85₽ за генерацию
+            KZT: 58500,    // Недоступно
+            UZS: 154800,   // Недоступно
+            CRYPTO: 6.00   // ~85₽ за генерацию
         },
-        description: '10 генераций'
+        description: '7 генераций'
+    },
+    {
+        id: 3,
+        credits: 15,
+        prices: {
+            RUB: 1200,     // 80₽ за генерацию
+            KZT: 108000,   // ~80₽ за генерацию
+            UZS: 286000,   // ~80₽ за генерацию
+            CRYPTO: 12.00  // ~80₽ за генерацию
+        },
+        description: '15 генераций'
+    },
+    {
+        id: 4,
+        credits: 30,
+        prices: {
+            RUB: 2000,     // ~67₽ за генерацию
+            KZT: 195000,   // ~65₽ за генерацию
+            UZS: 516000,   // ~65₽ за генерацию
+            CRYPTO: 20.00  // ~67₽ за генерацию
+        },
+        description: '30 генераций'
     }
 ];
 
@@ -142,6 +161,7 @@ export class RukassaPayment {
         this.bot = bot;
     }
 
+    // Инициализация таблицы платежей в базе данных
     async initPaymentsTable(): Promise<void> {
         const client = await this.pool.connect();
         try {
@@ -172,14 +192,21 @@ export class RukassaPayment {
         }
     }
 
+    // Форматирование суммы платежа согласно требованиям валюты
     formatAmount(amount: number, currency: SupportedCurrency): string {
         const curr = SUPPORTED_CURRENCIES.find(c => c.code === currency);
         if (!curr) {
             throw new Error('Неподдерживаемая валюта');
         }
+
+        if (curr.decimal_places === 0) {
+            return Math.round(amount).toString();
+        }
+
         return amount.toFixed(curr.decimal_places);
     }
 
+    // Создание нового платежа
     async createPayment(userId: number, packageId: number, currency: SupportedCurrency = 'RUB'): Promise<string> {
         const package_ = CREDIT_PACKAGES.find(p => p.id === packageId);
         if (!package_) {
@@ -191,15 +218,22 @@ export class RukassaPayment {
             throw new Error('Неподдерживаемая валюта');
         }
 
+        // Проверка минимальной суммы
+        if (package_.prices[currency] < curr.minAmount) {
+            throw new Error(`Минимальная сумма для ${currency}: ${curr.minAmount} ${curr.symbol}`);
+        }
+
         const merchantOrderId = `${userId}_${Date.now()}`;
         const amount = this.formatAmount(package_.prices[currency], currency);
         
         try {
+            // Сохраняем информацию о платеже в базе
             await this.pool.query(
                 'INSERT INTO payments (user_id, merchant_order_id, amount, credits, status, currency) VALUES ($1, $2, $3, $4, $5, $6)',
                 [userId, merchantOrderId, parseFloat(amount), package_.credits, 'pending', currency]
             );
 
+            // Формируем данные для запроса к API
             const formData = new URLSearchParams();
             formData.append('shop_id', SHOP_ID);
             formData.append('token', TOKEN);
@@ -213,6 +247,7 @@ export class RukassaPayment {
             formData.append('fail_url', `${WEBHOOK_URL}/payment/fail`);
             formData.append('back_url', `${WEBHOOK_URL}/payment/back`);
             
+            // Добавляем дополнительную информацию
             formData.append('custom_fields', JSON.stringify({
                 user_id: userId,
                 package_id: packageId,
@@ -220,6 +255,7 @@ export class RukassaPayment {
                 description: `${package_.description} для пользователя ${userId}`
             }));
 
+            // Логируем параметры запроса
             console.log('Параметры запроса:', {
                 url: RUKASSA_API_URL,
                 data: { 
@@ -228,6 +264,7 @@ export class RukassaPayment {
                 }
             });
 
+            // Отправляем запрос в API
             const response = await axios.post<RukassaCreatePaymentResponse>(
                 RUKASSA_API_URL,
                 formData,
@@ -257,6 +294,7 @@ export class RukassaPayment {
         } catch (error) {
             console.error('Ошибка при создании платежа:', error);
             
+            // Удаляем неудачный платёж из базы
             await this.pool.query(
                 'DELETE FROM payments WHERE merchant_order_id = $1',
                 [merchantOrderId]
@@ -275,6 +313,7 @@ export class RukassaPayment {
         }
     }
 
+    // Обработка webhook от платёжной системы
     async handleWebhook(data: RukassaWebhookBody): Promise<void> {
         console.log('Получены данные webhook:', data);
 
@@ -294,6 +333,7 @@ export class RukassaPayment {
             const { user_id, credits, currency, amount } = paymentResult.rows[0];
 
             if (data.payment_status === 'paid') {
+                // Начисляем кредиты пользователю
                 await client.query(
                     'UPDATE users SET credits = credits + $1 WHERE user_id = $2',
                     [credits, user_id]
@@ -324,7 +364,9 @@ export class RukassaPayment {
     }
 }
 
+// Настройка команд бота для работы с платежами
 export function setupPaymentCommands(bot: Telegraf, pool: Pool): void {
+    // Команда /buy - показывает список доступных способов оплаты
     bot.command('buy', async (ctx) => {
         const keyboard = Markup.inlineKeyboard([
             [Markup.button.callback('💳 Visa/MC (RUB)', 'currency_RUB')],
@@ -339,147 +381,160 @@ export function setupPaymentCommands(bot: Telegraf, pool: Pool): void {
         );
     });
 
-    bot.action(/currency_(.+)/, async (ctx) => {
-        try {
-            const currency = ctx.match[1] as SupportedCurrency;
-            const curr = SUPPORTED_CURRENCIES.find(c => c.code === currency);
-            
-            if (!curr) {
-                await ctx.answerCbQuery('Неподдерживаемая валюта');
-                return;
-            }
+    // Обработчик выбора валюты
+   bot.action(/currency_(.+)/, async (ctx) => {
+       try {
+           const currency = ctx.match[1] as SupportedCurrency;
+           const curr = SUPPORTED_CURRENCIES.find(c => c.code === currency);
+           
+           if (!curr) {
+               await ctx.answerCbQuery('Неподдерживаемая валюта');
+               return;
+           }
 
-            const keyboard = {
-                inline_keyboard: CREDIT_PACKAGES.map(pkg => [
-                    Markup.button.callback(
-                        `${pkg.description} - ${pkg.prices[currency]} ${curr.symbol}`,
-                        `buy_${pkg.id}_${currency}`
-                    )
-                ])
-            };
+           // Отфильтруем пакеты, доступные для выбранной валюты
+           const availablePackages = CREDIT_PACKAGES.filter(pkg => 
+               pkg.prices[currency] >= curr.minAmount
+           );
 
-            await ctx.answerCbQuery();
-            await ctx.editMessageText(
-                `💳 Выберите пакет кредитов (цены в ${curr.name}):`,
-                { reply_markup: keyboard }
-            );
-        } catch (error) {
-            console.error('Ошибка при выборе валюты:', error);
-            await ctx.reply('❌ Произошла ошибка. Попробуйте позже.');
-        }
-    });
+           const keyboard = {
+               inline_keyboard: availablePackages.map(pkg => [
+                   Markup.button.callback(
+                       `${pkg.description} - ${pkg.prices[currency]} ${curr.symbol}`,
+                       `buy_${pkg.id}_${currency}`
+                   )
+               ])
+           };
 
-    bot.action(/buy_(\d+)_(.+)/, async (ctx) => {
-        try {
-            const packageId = parseInt(ctx.match[1]);
-            const currency = ctx.match[2] as SupportedCurrency;
-            const userId = ctx.from?.id;
+           await ctx.answerCbQuery();
+           await ctx.editMessageText(
+               `💳 Выберите пакет кредитов (цены в ${curr.name}):`,
+               { reply_markup: keyboard }
+           );
+       } catch (error) {
+           console.error('Ошибка при выборе валюты:', error);
+           await ctx.reply('❌ Произошла ошибка. Попробуйте позже.');
+       }
+   });
 
-            if (!userId) {
-                await ctx.answerCbQuery('ID пользователя не найден');
-                return;
-            }
+   // Обработчик выбора пакета и создания платежа
+   bot.action(/buy_(\d+)_(.+)/, async (ctx) => {
+       try {
+           const packageId = parseInt(ctx.match[1]);
+           const currency = ctx.match[2] as SupportedCurrency;
+           const userId = ctx.from?.id;
 
-            await ctx.answerCbQuery();
+           if (!userId) {
+               await ctx.answerCbQuery('ID пользователя не найден');
+               return;
+           }
 
-            const rukassaPayment = new RukassaPayment(pool, bot);
-            const paymentUrl = await rukassaPayment.createPayment(userId, packageId, currency);
+           await ctx.answerCbQuery();
 
-            const package_ = CREDIT_PACKAGES.find(p => p.id === packageId);
-            const curr = SUPPORTED_CURRENCIES.find(c => c.code === currency);
+           const rukassaPayment = new RukassaPayment(pool, bot);
+           const paymentUrl = await rukassaPayment.createPayment(userId, packageId, currency);
 
-            await ctx.reply(
-                `🔄 Для оплаты ${package_?.description} (${package_?.prices[currency]} ${curr?.symbol}) перейдите по ссылке:\n` +
-                `${paymentUrl}\n\n` +
-                'После оплаты кредиты будут автоматически зачислены на ваш счет.',
-                { disable_web_page_preview: true }
-            );
-        } catch (error) {
-            console.error('Ошибка при создании платежа:', error);
-            await ctx.reply('❌ Произошла ошибка при создании платежа. Попробуйте позже.');
-        }
-    });
+           const package_ = CREDIT_PACKAGES.find(p => p.id === packageId);
+           const curr = SUPPORTED_CURRENCIES.find(c => c.code === currency);
+
+           await ctx.reply(
+               `🔄 Для оплаты ${package_?.description} (${package_?.prices[currency]} ${curr?.symbol}) перейдите по ссылке:\n` +
+               `${paymentUrl}\n\n` +
+               'После оплаты кредиты будут автоматически зачислены на ваш счет.',
+               { disable_web_page_preview: true }
+           );
+       } catch (error) {
+           console.error('Ошибка при создании платежа:', error);
+           await ctx.reply('❌ Произошла ошибка при создании платежа. Попробуйте позже.');
+       }
+   });
 }
 
+// Настройка обработчиков webhook'ов и страниц результата оплаты
 export function setupRukassaWebhook(app: express.Express, rukassaPayment: RukassaPayment): void {
-    app.post('/rukassa/webhook', express.json(), async (req, res) => {
-        try {
-            console.log('Получен webhook от Rukassa:');
-            console.log('Headers:', req.headers);
-            console.log('Body:', JSON.stringify(req.body, null, 2));
-            
-            await rukassaPayment.handleWebhook(req.body);
-            console.log('Webhook обработан успешно');
-            
-            res.json({ status: 'success' });
-        } catch (error) {
-            console.error('Ошибка обработки webhook от Rukassa:', error);
-            res.status(500).json({ 
-                status: 'error',
-                message: error instanceof Error ? error.message : 'Unknown error'
-            });
-        }
-    });
- 
-    app.get('/payment/success', (req, res) => {
-        res.send(`
-            <html>
-                <head>
-                    <title>Оплата успешна</title>
-                    <meta charset="utf-8">
-                    <meta name="viewport" content="width=device-width, initial-scale=1">
-                </head>
-                <body style="display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; font-family: Arial, sans-serif;">
-                    <div style="text-align: center; padding: 20px;">
-                        <h1 style="color: #4CAF50;">✅ Оплата успешно завершена!</h1>
-                        <p>Вернитесь в Telegram бот для проверки баланса.</p>
-                    </div>
-                </body>
-            </html>
-        `);
-    });
- 
-    app.get('/payment/fail', (req, res) => {
-        res.send(`
-            <html>
-                <head>
-                    <title>Ошибка оплаты</title>
-                    <meta charset="utf-8">
-                    <meta name="viewport" content="width=device-width, initial-scale=1">
-                </head>
-                <body style="display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; font-family: Arial, sans-serif;">
-                    <div style="text-align: center; padding: 20px;">
-                        <h1 style="color: #f44336;">❌ Ошибка оплаты</h1>
-                        <p>Вернитесь в Telegram бот и попробуйте снова.</p>
-                    </div>
-                </body>
-            </html>
-        `);
-    });
- 
-    app.get('/payment/back', (req, res) => {
-        res.send(`
-            <html>
-                <head>
-                    <title>Отмена оплаты</title>
-                    <meta charset="utf-8">
-                    <meta name="viewport" content="width=device-width, initial-scale=1">
-                </head>
-                <body style="display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; font-family: Arial, sans-serif;">
-                    <div style="text-align: center; padding: 20px;">
-                        <h1 style="color: #2196F3;">↩️ Оплата отменена</h1>
-                        <p>Вернитесь в Telegram бот для создания нового платежа.</p>
-                    </div>
-                </body>
-            </html>
-        `);
-    });
- 
-    app.get('/health', (req, res) => {
-        res.json({
-            status: 'ok',
-            timestamp: new Date().toISOString(),
-            webhook_url: `${WEBHOOK_URL}/rukassa/webhook`
-        });
-    });
- }
+   // Обработчик webhook'а от Rukassa
+   app.post('/rukassa/webhook', express.json(), async (req, res) => {
+       try {
+           console.log('Получен webhook от Rukassa:');
+           console.log('Headers:', req.headers);
+           console.log('Body:', JSON.stringify(req.body, null, 2));
+           
+           await rukassaPayment.handleWebhook(req.body);
+           console.log('Webhook обработан успешно');
+           
+           res.json({ status: 'success' });
+       } catch (error) {
+           console.error('Ошибка обработки webhook от Rukassa:', error);
+           res.status(500).json({ 
+               status: 'error',
+               message: error instanceof Error ? error.message : 'Unknown error'
+           });
+       }
+   });
+
+   // Страница успешной оплаты
+   app.get('/payment/success', (req, res) => {
+       res.send(`
+           <html>
+               <head>
+                   <title>Оплата успешна</title>
+                   <meta charset="utf-8">
+                   <meta name="viewport" content="width=device-width, initial-scale=1">
+               </head>
+               <body style="display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; font-family: Arial, sans-serif;">
+                   <div style="text-align: center; padding: 20px;">
+                       <h1 style="color: #4CAF50;">✅ Оплата успешно завершена!</h1>
+                       <p>Вернитесь в Telegram бот для проверки баланса.</p>
+                   </div>
+               </body>
+           </html>
+       `);
+   });
+
+   // Страница неуспешной оплаты
+   app.get('/payment/fail', (req, res) => {
+       res.send(`
+           <html>
+               <head>
+                   <title>Ошибка оплаты</title>
+                   <meta charset="utf-8">
+                   <meta name="viewport" content="width=device-width, initial-scale=1">
+               </head>
+               <body style="display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; font-family: Arial, sans-serif;">
+                   <div style="text-align: center; padding: 20px;">
+                       <h1 style="color: #f44336;">❌ Ошибка оплаты</h1>
+                       <p>Вернитесь в Telegram бот и попробуйте снова.</p>
+                   </div>
+               </body>
+           </html>
+       `);
+   });
+
+   // Страница отмены оплаты
+   app.get('/payment/back', (req, res) => {
+       res.send(`
+           <html>
+               <head>
+                   <title>Отмена оплаты</title>
+                   <meta charset="utf-8">
+                   <meta name="viewport" content="width=device-width, initial-scale=1">
+               </head>
+               <body style="display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; font-family: Arial, sans-serif;">
+                   <div style="text-align: center; padding: 20px;">
+                       <h1 style="color: #2196F3;">↩️ Оплата отменена</h1>
+                       <p>Вернитесь в Telegram бот для создания нового платежа.</p>
+                   </div>
+               </body>
+           </html>
+       `);
+   });
+
+   // Эндпоинт проверки здоровья сервиса
+   app.get('/health', (req, res) => {
+       res.json({
+           status: 'ok',
+           timestamp: new Date().toISOString(),
+           webhook_url: `${WEBHOOK_URL}/rukassa/webhook`
+       });
+   });
+}
