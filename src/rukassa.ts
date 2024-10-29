@@ -3,12 +3,6 @@ import axios from 'axios';
 import { Pool } from 'pg';
 import express from 'express';
 import { MultiBotManager } from './multibot';
-import { BotContext, MessageContext, CallbackContext } from './types';
-
-// Используем тот же интерфейс контекста
-interface BotContext extends Context {
-    message: Update.Message;
-}
 
 // Основные конфигурационные параметры
 const SHOP_ID = process.env.SHOP_ID || '2660';
@@ -149,10 +143,10 @@ interface RukassaWebhookBody {
 
 export class RukassaPayment {
     private pool: Pool;
-    private bot: Telegraf<BotContext>;
+    private bot: Telegraf;
     private botId: string;
 
-    constructor(pool: Pool, bot: Telegraf<BotContext>, botId: string) {
+    constructor(pool: Pool, bot: Telegraf, botId: string) {
         this.pool = pool;
         this.bot = bot;
         this.botId = botId;
@@ -172,14 +166,11 @@ export class RukassaPayment {
                     credits INTEGER,
                     status TEXT,
                     currency TEXT,
-                    partner_id TEXT,
-                    commission_amount DECIMAL,
                     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
                 );
                 
                 CREATE INDEX IF NOT EXISTS idx_payments_bot_id ON payments(bot_id);
-                CREATE INDEX IF NOT EXISTS idx_payments_partner_id ON payments(partner_id);
                 CREATE INDEX IF NOT EXISTS idx_payments_user_id ON payments(user_id);
                 CREATE INDEX IF NOT EXISTS idx_payments_status ON payments(status);
             `);
@@ -216,20 +207,10 @@ export class RukassaPayment {
         const amountInRubles = this.convertToRubles(package_.prices[currency], currency);
         
         try {
-            // Получаем информацию о партнере для этого бота
-            const partnerResult = await this.pool.query(
-                'SELECT partner_id FROM bots WHERE bot_id = $1',
-                [this.botId]
-            );
-            const partnerId = partnerResult.rows[0]?.partner_id;
-
             // Сохраняем платеж в базе
             await this.pool.query(
-                `INSERT INTO payments 
-                (user_id, bot_id, merchant_order_id, amount, credits, status, currency, partner_id) 
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-                [userId, this.botId, merchantOrderId, package_.prices[currency], 
-                 package_.credits, 'pending', currency, partnerId]
+                'INSERT INTO payments (user_id, bot_id, merchant_order_id, amount, credits, status, currency) VALUES ($1, $2, $3, $4, $5, $6, $7)',
+                [userId, this.botId, merchantOrderId, package_.prices[currency], package_.credits, 'pending', currency]
             );
 
             const formData = new URLSearchParams();
@@ -248,21 +229,12 @@ export class RukassaPayment {
             formData.append('custom_fields', JSON.stringify({
                 user_id: userId,
                 bot_id: this.botId,
-                partner_id: partnerId,
                 package_id: packageId,
                 credits: package_.credits,
                 original_amount: package_.prices[currency],
                 original_currency: currency,
                 description: `${package_.description} для пользователя ${userId}`
             }));
-
-            console.log('Параметры запроса:', {
-                url: RUKASSA_API_URL,
-                data: { 
-                    ...Object.fromEntries(formData),
-                    token: '***hidden***'
-                }
-            });
 
             const response = await axios.post<RukassaCreatePaymentResponse>(
                 RUKASSA_API_URL,
@@ -276,8 +248,6 @@ export class RukassaPayment {
                 }
             );
 
-            console.log('Ответ Rukassa:', response.data);
-
             if (response.data.error) {
                 throw new Error(response.data.message || response.data.error);
             }
@@ -287,7 +257,6 @@ export class RukassaPayment {
                 throw new Error('Не удалось получить ссылку на оплату');
             }
 
-            console.log(`Создан платеж для пользователя ${userId}, заказ ${merchantOrderId}`);
             return paymentUrl;
 
         } catch (error) {
@@ -314,18 +283,15 @@ export class RukassaPayment {
     }
 
     async handleWebhook(data: RukassaWebhookBody): Promise<void> {
-        console.log('Получены данные webhook:', data);
-
         const client = await this.pool.connect();
         try {
             await client.query('BEGIN');
 
-            // Обновляем статус платежа
             const paymentResult = await client.query(
                 `UPDATE payments 
                 SET status = $1, order_id = $2, updated_at = CURRENT_TIMESTAMP 
                 WHERE merchant_order_id = $3 
-                RETURNING id, user_id, credits, currency, amount, bot_id, partner_id`,
+                RETURNING id, user_id, credits, currency, amount, bot_id`,
                 [data.payment_status, data.order_id, data.merchant_order_id]
             );
 
@@ -338,45 +304,45 @@ export class RukassaPayment {
             if (data.payment_status === 'paid') {
                 // Начисляем кредиты пользователю
                 await client.query(
-                    'UPDATE users SET credits = credits + $1 WHERE user_id = $2 AND bot_id = $3',
-                    [payment.credits, payment.user_id, payment.bot_id]
+                    'UPDATE users SET credits = credits + $1 WHERE user_id = $2',
+                    [payment.credits, payment.user_id]
                 );
 
-                // Обрабатываем комиссию партнера, если есть
-                if (payment.partner_id) {
-                    const partnerResult = await client.query(
-                        'SELECT commission_rate FROM partners WHERE partner_id = $1',
-                        [payment.partner_id]
+                // Проверяем наличие реферала
+                const referralQuery = await client.query(
+                    'SELECT referral_id FROM users WHERE user_id = $1',
+                    [payment.user_id]
+                );
+
+                const referrerId = referralQuery.rows[0]?.referral_id;
+                if (referrerId) {
+                    // Рассчитываем реферальное начисление (50% от суммы)
+                    const referralAmount = payment.amount * 0.5;
+
+                    // Создаем запись о начислении
+                    await client.query(
+                        `INSERT INTO referral_earnings 
+                        (referrer_id, referred_id, payment_id, amount) 
+                        VALUES ($1, $2, $3, $4)`,
+                        [referrerId, payment.user_id, payment.id, referralAmount]
                     );
-                    
-                    if (partnerResult.rows.length > 0) {
-                        const commissionRate = partnerResult.rows[0].commission_rate;
-                        const commissionAmount = payment.amount * commissionRate;
 
-                        // Обновляем баланс партнера
-                        await client.query(
-                            'UPDATE partners SET balance = balance + $1 WHERE partner_id = $2',
-                            [commissionAmount, payment.partner_id]
-                        );
+                    // Обновляем общий баланс реферала
+                    await client.query(
+                        `UPDATE users 
+                        SET total_referral_earnings = total_referral_earnings + $1 
+                        WHERE user_id = $2`,
+                        [referralAmount, referrerId]
+                    );
 
-                        // Сохраняем транзакцию партнера
-                        await client.query(
-                            `INSERT INTO partner_transactions 
-                            (partner_id, payment_id, bot_id, amount, commission_amount, status) 
-                            VALUES ($1, $2, $3, $4, $5, $6)`,
-                            [payment.partner_id, payment.id, payment.bot_id, 
-                             payment.amount, commissionAmount, 'completed']
-                        );
-
-                        // Обновляем сумму комиссии в платеже
-                        await client.query(
-                            'UPDATE payments SET commission_amount = $1 WHERE id = $2',
-                            [commissionAmount, payment.id]
-                        );
-                    }
+                    // Отправляем уведомление рефереру
+                    await this.bot.telegram.sendMessage(
+                        referrerId,
+                        `🎉 Вам начислено ${referralAmount}₽ по реферальной программе!\n` +
+                        `Спасибо за приглашение новых пользователей!`
+                    );
                 }
 
-                // Отправляем уведомление пользователю
                 const curr = SUPPORTED_CURRENCIES.find(c => c.code === payment.currency);
                 await this.bot.telegram.sendMessage(
                     payment.user_id,
@@ -391,10 +357,8 @@ export class RukassaPayment {
             }
 
             await client.query('COMMIT');
-            console.log(`Webhook обработан успешно: статус=${data.payment_status}, пользователь=${payment.user_id}`);
         } catch (error) {
             await client.query('ROLLBACK');
-            console.error('Ошибка при обработке webhook:', error);
             throw error;
         } finally {
             client.release();
@@ -402,57 +366,27 @@ export class RukassaPayment {
     }
 }
 
-// Настройка команд оплаты
-export function setupPaymentCommands(bot: Telegraf<BotContext>, pool: Pool, botId: string): void {
-    bot.command('buy', async (ctx: MessageContext) => {
+export function setupPaymentCommands(bot: Telegraf, pool: Pool, botId: string): void {
+    bot.action(/currency_(.+)/, async (ctx) => {
         try {
-            await ctx.telegram.sendMessage(ctx.message.chat.id, '💳 Выберите способ оплаты:', {
-                reply_markup: {
-                    inline_keyboard: [
-                        [{ text: '💳 Visa/MC (RUB)', callback_data: `currency_${botId}_RUB` }],
-                        [{ text: '💳 Visa/MC (KZT)', callback_data: `currency_${botId}_KZT` }],
-                        [{ text: '💳 Visa/MC (UZS)', callback_data: `currency_${botId}_UZS` }],
-                        [{ text: '💎 Криптовалюта', callback_data: `currency_${botId}_CRYPTO` }]
-                    ]
-                }
-            });
-        } catch (error) {
-            console.error('Ошибка при отображении меню оплаты:', error);
-            await ctx.telegram.sendMessage(ctx.message.chat.id, '❌ Произошла ошибка. Попробуйте позже.');
-        }
-    });
-
-    bot.action(/currency_(.+)_(.+)/, async (ctx: CallbackContext) => {
-        try {
-            const [, botIdFromAction, currency] = ctx.match || [];
+            if (!ctx.match) return;
             
-            // Проверяем, совпадает ли botId из action с текущим ботом
-            if (botIdFromAction !== botId) {
-                await ctx.answerCbQuery('Недействительная кнопка');
-                return;
-            }
-
-            const curr = SUPPORTED_CURRENCIES.find(c => c.code === currency as SupportedCurrency);
+            const currency = ctx.match[1] as SupportedCurrency;
+            const curr = SUPPORTED_CURRENCIES.find(c => c.code === currency);
             
             if (!curr) {
                 await ctx.answerCbQuery('Неподдерживаемая валюта');
                 return;
             }
 
-            // Создаем клавиатуру с пакетами
             const keyboard = CREDIT_PACKAGES.map(pkg => [{
-                text: `${pkg.description} - ${pkg.prices[currency as SupportedCurrency]} ${curr.symbol}`,
-                callback_data: `buy_${botId}_${pkg.id}_${currency}`
+                text: `${pkg.description} - ${pkg.prices[currency]} ${curr.symbol}`,
+                callback_data: `buy_${pkg.id}_${currency}`
             }]);
 
-            await ctx.answerCbQuery();
             await ctx.editMessageText(
                 `💳 Выберите пакет кредитов (цены в ${curr.name}):`,
-                {
-                    reply_markup: {
-                        inline_keyboard: keyboard
-                    }
-                }
+                { reply_markup: { inline_keyboard: keyboard } }
             );
         } catch (error) {
             console.error('Ошибка при выборе валюты:', error);
@@ -460,28 +394,17 @@ export function setupPaymentCommands(bot: Telegraf<BotContext>, pool: Pool, botI
         }
     });
 
-    // Обработчик выбора пакета
-    bot.action(/buy_(.+)_(\d+)_(.+)/, async (ctx: CallbackContext) => {
+    bot.action(/buy_(\d+)_(.+)/, async (ctx) => {
         try {
-            const [, botIdFromAction, packageId, currency] = ctx.match;
-            
-            if (botIdFromAction !== botId) {
-                await ctx.answerCbQuery('Недействительная кнопка');
-                return;
-            }
+            if (!ctx.match || !ctx.from?.id) return;
 
-            const userId = ctx.from?.id;
-            if (!userId) {
-                await ctx.answerCbQuery('ID пользователя не найден');
-                return;
-            }
-
-            await ctx.answerCbQuery();
+            const [, packageId, currency] = ctx.match;
+            const userId = ctx.from.id;
 
             const rukassaPayment = new RukassaPayment(pool, bot, botId);
             const paymentUrl = await rukassaPayment.createPayment(
-                userId, 
-                parseInt(packageId), 
+                userId,
+                parseInt(packageId),
                 currency as SupportedCurrency
             );
 
@@ -502,7 +425,6 @@ export function setupPaymentCommands(bot: Telegraf<BotContext>, pool: Pool, botI
     });
 }
 
-// Настройка webhook для Rukassa
 export function setupRukassaWebhook(app: express.Express, multiBotManager: MultiBotManager): void {
     app.post('/rukassa/webhook', express.json(), async (req, res) => {
         try {
@@ -540,7 +462,6 @@ export function setupRukassaWebhook(app: express.Express, multiBotManager: Multi
         }
     });
 
-    // Страницы результатов оплаты
     function getPaymentPageHtml(title: string, status: 'success' | 'fail' | 'back'): string {
         const colors = {
             success: '#4CAF50',
@@ -630,7 +551,6 @@ export function setupRukassaWebhook(app: express.Express, multiBotManager: Multi
     });
 }
 
-// Экспорт типов
 export type {
     RukassaCreatePaymentResponse,
     RukassaWebhookBody,
