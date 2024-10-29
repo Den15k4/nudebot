@@ -394,7 +394,7 @@ function setupBotHandlers(bot: Telegraf<Context<Update>>, botId: string = 'main'
    const rukassaPayment = new RukassaPayment(pool, bot, botId);
    rukassaPayment.initPaymentsTable();
    setupPaymentCommands(bot, pool, botId);
-}
+
 
 // Настройка webhook для обработки результатов
 app.post('/webhook', upload.any(), async (req, res) => {
