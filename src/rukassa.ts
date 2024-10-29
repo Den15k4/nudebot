@@ -8,6 +8,33 @@ const TOKEN = process.env.TOKEN || '9876a82910927a2c9a43f34cb5ad2de7';
 const RUKASSA_API_URL = 'https://lk.rukassa.pro/api/v1/create';
 const WEBHOOK_URL = process.env.WEBHOOK_URL?.replace('/webhook', '') || 'https://nudebot-production.up.railway.app';
 
+// Interfaces
+interface RukassaCreatePaymentResponse {
+    status: boolean;
+    error?: string;
+    message?: string;
+    url?: string;
+    link?: string;
+    id?: number;
+    hash?: string;
+    order_id?: string;
+}
+
+interface RukassaWebhookBody {
+    shop_id: string;
+    amount: string;
+    order_id: string;
+    payment_status: string;
+    payment_method: string;
+    custom_fields: string;
+    merchant_order_id: string;
+    sign: string;
+    status?: string;
+    currency?: string;
+    description?: string;
+    test?: boolean;
+}
+
 interface Price {
     [key: string]: number;
     RUB: number;
@@ -24,7 +51,7 @@ interface Currency {
     name: string;
     method: string;
     minAmount: number;
-    decimal_places: number;  // Добавляем поле для указания количества десятичных знаков
+    decimal_places: number;
 }
 
 interface PaymentPackage {
@@ -33,6 +60,7 @@ interface PaymentPackage {
     prices: Price;
     description: string;
 }
+
 
 const SUPPORTED_CURRENCIES: Currency[] = [
     { 
