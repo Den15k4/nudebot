@@ -1,15 +1,14 @@
-import { Telegraf } from 'telegraf';
-import { Context as TelegrafContext } from 'telegraf';
-import { Message, Update } from 'telegraf/typings/core/types/typegram';
+import { Telegraf, Context } from 'telegraf';
+import type { Update } from 'telegraf/types';
 import axios from 'axios';
 import { Pool } from 'pg';
 import express from 'express';
 import { MultiBotManager } from './multibot';
 
-// Определяем тип контекста
-type Context = TelegrafContext & {
-    message?: Update.MessageUpdate['message'];
-};
+// Используем тот же интерфейс контекста
+interface BotContext extends Context {
+    message: Update.Message;
+}
 
 // Основные конфигурационные параметры
 const SHOP_ID = process.env.SHOP_ID || '2660';
@@ -150,10 +149,10 @@ interface RukassaWebhookBody {
 
 export class RukassaPayment {
     private pool: Pool;
-    private bot: Telegraf<Context>;
+    private bot: Telegraf<BotContext>;
     private botId: string;
 
-    constructor(pool: Pool, bot: Telegraf<Context>, botId: string) {
+    constructor(pool: Pool, bot: Telegraf<BotContext>, botId: string) {
         this.pool = pool;
         this.bot = bot;
         this.botId = botId;
@@ -404,8 +403,8 @@ export class RukassaPayment {
 }
 
 // Настройка команд оплаты
-export function setupPaymentCommands(bot: Telegraf<Context>, pool: Pool, botId: string): void {
-    bot.command('buy', async (ctx) => {
+export function setupPaymentCommands(bot: Telegraf<BotContext>, pool: Pool, botId: string): void {
+    bot.command('buy', async (ctx: BotContext) => {
         try {
             await ctx.reply('💳 Выберите способ оплаты:', {
                 reply_markup: {
@@ -424,7 +423,7 @@ export function setupPaymentCommands(bot: Telegraf<Context>, pool: Pool, botId: 
     });
 
     // Обработчик выбора валюты
-    bot.action(/currency_(.+)_(.+)/, async (ctx) => {
+    bot.action(/currency_(.+)_(.+)/, async (ctx: BotContext) => {
         try {
             const [, botIdFromAction, currency] = ctx.match;
             
@@ -463,7 +462,7 @@ export function setupPaymentCommands(bot: Telegraf<Context>, pool: Pool, botId: 
     });
 
     // Обработчик выбора пакета
-    bot.action(/buy_(.+)_(\d+)_(.+)/, async (ctx) => {
+    bot.action(/buy_(.+)_(\d+)_(.+)/, async (ctx: BotContext) => {
         try {
             const [, botIdFromAction, packageId, currency] = ctx.match;
             

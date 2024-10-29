@@ -1,13 +1,12 @@
-import { Telegraf } from 'telegraf';
-import { Context as TelegrafContext } from 'telegraf';
-import { Message, Update } from 'telegraf/typings/core/types/typegram';
+import { Telegraf, Context } from 'telegraf';
+import type { Update } from 'telegraf/types';
 import { Pool } from 'pg';
 import { RukassaPayment } from './rukassa';
 
-// Определяем тип контекста
-type Context = TelegrafContext & {
-    message?: Update.MessageUpdate['message'];
-};
+// Используем тот же интерфейс контекста
+interface BotContext extends Context {
+    message: Update.Message;
+}
 
 interface BotConfig {
     bot_id: string;
@@ -18,7 +17,7 @@ interface BotConfig {
 }
 
 export class MultiBotManager {
-    private bots: Map<string, Telegraf<Context>> = new Map();
+    private bots: Map<string, Telegraf<BotContext>> = new Map();
     private payments: Map<string, RukassaPayment> = new Map();
     private pool: Pool;
 
@@ -28,14 +27,7 @@ export class MultiBotManager {
 
     async initializeBot(config: BotConfig): Promise<void> {
         try {
-            // Проверяем, не запущен ли уже бот с таким ID
-            if (this.bots.has(config.bot_id)) {
-                console.log(`Бот ${config.bot_id} уже запущен`);
-                return;
-            }
-
-            // Создаем нового бота
-            const bot = new Telegraf<Context>(config.token);
+            const bot = new Telegraf<BotContext>(config.token);
             
             // Создаем экземпляр платежной системы для бота
             const payment = new RukassaPayment(this.pool, bot, config.bot_id);
@@ -182,7 +174,7 @@ export class MultiBotManager {
         }
     }
 
-    getBot(botId: string): Telegraf<Context> | undefined {
+    getBot(botId: string): Telegraf<BotContext> | undefined {
         return this.bots.get(botId);
     }
 

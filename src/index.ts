@@ -1,6 +1,5 @@
-import { Telegraf } from 'telegraf';
-import { Context as TelegrafContext } from 'telegraf';
-import { Message, Update } from 'telegraf/typings/core/types/typegram';
+import { Telegraf, Context } from 'telegraf';
+import type { Message, Update } from 'telegraf/types';
 import { message } from 'telegraf/filters';
 import axios from 'axios';
 import { Pool } from 'pg';
@@ -11,13 +10,13 @@ import multer from 'multer';
 import { RukassaPayment, setupPaymentCommands, setupRukassaWebhook } from './rukassa';
 import { MultiBotManager } from './multibot';
 
+
 dotenv.config();
 
-// Определяем тип контекста
-type Context = TelegrafContext & {
-    message?: Update.MessageUpdate['message'];
+// Определяем интерфейс для контекста
+interface BotContext extends Context {
+    message: Update.Message;
 };
-
 // Конфигурационные параметры
 const BOT_TOKEN = process.env.BOT_TOKEN || '7543266158:AAETR2eLuk2joRxh6w2IvPePUw2LZa8_56U';
 const CLOTHOFF_API_KEY = process.env.CLOTHOFF_API_KEY || '4293b3bc213bba6a74011fba8d4ad9bd460599d9';
@@ -65,7 +64,7 @@ const pool = new Pool({
 const multiBotManager = new MultiBotManager(pool);
 
 // Инициализация основного бота
-const mainBot = new Telegraf<Context>(BOT_TOKEN);
+const mainBot = new Telegraf<BotContext>(BOT_TOKEN);
 
 // Инициализация API клиента
 const apiClient = axios.create({
@@ -268,8 +267,8 @@ async function processImage(imageBuffer: Buffer, userId: number, botId: string =
 }
 
 // Настройка обработчиков бота
-function setupBotHandlers(bot: Telegraf<Context>, botId: string = 'main') {
-    bot.command('start', async (ctx) => {
+function setupBotHandlers(bot: Telegraf<BotContext>, botId: string = 'main') {
+    bot.command('start', async (ctx: BotContext) => {
         try {
             const userId = ctx.from?.id;
             const username = ctx.from?.username;
@@ -294,7 +293,7 @@ function setupBotHandlers(bot: Telegraf<Context>, botId: string = 'main') {
         }
     });
 
-    bot.command('credits', async (ctx) => {
+    bot.command('credits', async (ctx: BotContext) => {
         try {
             const userId = ctx.from?.id;
             if (!userId) return;
@@ -307,7 +306,7 @@ function setupBotHandlers(bot: Telegraf<Context>, botId: string = 'main') {
         }
     });
 
-    bot.on(message('photo'), async (ctx) => {
+    bot.on(message('photo'), async (ctx: BotContext) => {
         const userId = ctx.from?.id;
         if (!userId) return;
 
