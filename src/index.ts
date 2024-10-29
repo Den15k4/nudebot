@@ -325,7 +325,7 @@ function setupBotHandlers(bot: Telegraf, botId: string = 'main') {
             }
 
             const imageResponse = await axios.get(
-                `https://api.telegram.org/file/bot${bot.token}/${file.file_path}`,
+                `https://api.telegram.org/file/bot${BOT_TOKEN}/${file.file_path}`,
                 { responseType: 'arraybuffer' }
             );
 
