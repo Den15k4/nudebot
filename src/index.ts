@@ -1,6 +1,6 @@
-import { Telegraf, Context } from 'telegraf';
-import type { Message, Update } from 'telegraf/types';
+import { Telegraf } from 'telegraf';
 import { message } from 'telegraf/filters';
+import { Message, Update } from 'telegraf/types';
 import axios from 'axios';
 import { Pool } from 'pg';
 import dotenv from 'dotenv';
@@ -9,7 +9,7 @@ import express from 'express';
 import multer from 'multer';
 import { RukassaPayment, setupPaymentCommands, setupRukassaWebhook } from './rukassa';
 import { MultiBotManager } from './multibot';
-
+import { BotContext, CommandContext } from './types';
 
 dotenv.config();
 
@@ -268,14 +268,12 @@ async function processImage(imageBuffer: Buffer, userId: number, botId: string =
 
 // Настройка обработчиков бота
 function setupBotHandlers(bot: Telegraf<BotContext>, botId: string = 'main') {
-    bot.command('start', async (ctx: BotContext) => {
+    bot.command('start', async (ctx: CommandContext) => {
         try {
             const userId = ctx.from?.id;
             const username = ctx.from?.username;
 
-            if (!userId) {
-                return;
-            }
+            if (!userId) return;
 
             await addNewUser(userId, username, botId);
             

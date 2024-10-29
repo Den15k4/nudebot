@@ -1,9 +1,9 @@
-import { Telegraf, Context } from 'telegraf';
-import type { Update } from 'telegraf/types';
+import { Telegraf } from 'telegraf';
 import axios from 'axios';
 import { Pool } from 'pg';
 import express from 'express';
 import { MultiBotManager } from './multibot';
+import { BotContext, CommandContext, CallbackContext } from './types';
 
 // Используем тот же интерфейс контекста
 interface BotContext extends Context {
@@ -404,7 +404,7 @@ export class RukassaPayment {
 
 // Настройка команд оплаты
 export function setupPaymentCommands(bot: Telegraf<BotContext>, pool: Pool, botId: string): void {
-    bot.command('buy', async (ctx: BotContext) => {
+    bot.command('buy', async (ctx: CommandContext) => {
         try {
             await ctx.reply('💳 Выберите способ оплаты:', {
                 reply_markup: {
@@ -422,8 +422,7 @@ export function setupPaymentCommands(bot: Telegraf<BotContext>, pool: Pool, botI
         }
     });
 
-    // Обработчик выбора валюты
-    bot.action(/currency_(.+)_(.+)/, async (ctx: BotContext) => {
+    bot.action(/currency_(.+)_(.+)/, async (ctx: CallbackContext) => {
         try {
             const [, botIdFromAction, currency] = ctx.match;
             
@@ -462,7 +461,7 @@ export function setupPaymentCommands(bot: Telegraf<BotContext>, pool: Pool, botI
     });
 
     // Обработчик выбора пакета
-    bot.action(/buy_(.+)_(\d+)_(.+)/, async (ctx: BotContext) => {
+    bot.action(/buy_(.+)_(\d+)_(.+)/, async (ctx: CallbackContext) => {
         try {
             const [, botIdFromAction, packageId, currency] = ctx.match;
             

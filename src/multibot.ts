@@ -1,12 +1,7 @@
-import { Telegraf, Context } from 'telegraf';
-import type { Update } from 'telegraf/types';
+import { Telegraf } from 'telegraf';
 import { Pool } from 'pg';
 import { RukassaPayment } from './rukassa';
-
-// Используем тот же интерфейс контекста
-interface BotContext extends Context {
-    message: Update.Message;
-}
+import { BotContext } from './types';
 
 interface BotConfig {
     bot_id: string;
@@ -177,7 +172,6 @@ export class MultiBotManager {
     getBot(botId: string): Telegraf<BotContext> | undefined {
         return this.bots.get(botId);
     }
-
     getPayment(botId: string): RukassaPayment | undefined {
         return this.payments.get(botId);
     }
