@@ -3,13 +3,11 @@ import axios from 'axios';
 import { Pool } from 'pg';
 import express from 'express';
 
-// Environment configuration
 const SHOP_ID = process.env.SHOP_ID || '2660';
 const TOKEN = process.env.TOKEN || '9876a82910927a2c9a43f34cb5ad2de7';
 const RUKASSA_API_URL = 'https://lk.rukassa.pro/api/v1/create';
 const WEBHOOK_URL = process.env.WEBHOOK_URL?.replace('/webhook', '') || 'https://nudebot-production.up.railway.app';
 
-// Interfaces
 interface Price {
     [key: string]: number;
     RUB: number;
@@ -26,6 +24,7 @@ interface Currency {
     name: string;
     method: string;
     minAmount: number;
+    decimal_places: number;  // Добавляем поле для указания количества десятичных знаков
 }
 
 interface PaymentPackage {
@@ -35,57 +34,38 @@ interface PaymentPackage {
     description: string;
 }
 
-interface RukassaCreatePaymentResponse {
-    status: boolean;
-    error?: string;
-    url?: string;
-    link?: string;
-    order_id?: string;
-    message?: string;
-    id?: number;
-    hash?: string;
-}
-
-interface RukassaWebhookBody {
-    shop_id: string;
-    amount: string;
-    order_id: string;
-    payment_status: string;
-    payment_method: string;
-    custom_fields: string;
-    merchant_order_id: string;
-    sign: string;
-}
-
-// Supported payment methods and currencies
 const SUPPORTED_CURRENCIES: Currency[] = [
     { 
         code: 'RUB', 
         symbol: '₽', 
         name: 'Visa/MC (RUB)', 
         method: 'card',
-        minAmount: 300
+        minAmount: 300,
+        decimal_places: 2
     },
     { 
         code: 'KZT', 
         symbol: '₸', 
         name: 'Visa/MC (KZT)', 
         method: 'card_kzt',
-        minAmount: 2750
+        minAmount: 1900,
+        decimal_places: 2
     },
     { 
         code: 'UZS', 
         symbol: 'сум', 
         name: 'Visa/MC (UZS)', 
         method: 'card_uzs',
-        minAmount: 6350
+        minAmount: 6350,
+        decimal_places: 2
     },
     { 
         code: 'CRYPTO', 
         symbol: 'USDT', 
         name: 'Криптовалюта', 
         method: 'crypto',
-        minAmount: 1.00
+        minAmount: 3,
+        decimal_places: 2
     }
 ];
 
@@ -95,9 +75,9 @@ const CREDIT_PACKAGES: PaymentPackage[] = [
         credits: 1,
         prices: {
             RUB: 300,
-            KZT: 2750,
+            KZT: 1900,
             UZS: 6350,
-            CRYPTO: 1.00
+            CRYPTO: 3
         },
         description: '1 генерация'
     },
@@ -106,9 +86,9 @@ const CREDIT_PACKAGES: PaymentPackage[] = [
         credits: 3,
         prices: {
             RUB: 600,
-            KZT: 5500,
+            KZT: 3800,
             UZS: 12700,
-            CRYPTO: 2.00
+            CRYPTO: 6
         },
         description: '3 генерации'
     },
@@ -116,10 +96,10 @@ const CREDIT_PACKAGES: PaymentPackage[] = [
         id: 3,
         credits: 10,
         prices: {
-            RUB: 1500,
-            KZT: 14950,
+            RUB: 1200,
+            KZT: 7600,
             UZS: 31750,
-            CRYPTO: 5.00
+            CRYPTO: 12
         },
         description: '10 генераций'
     }
@@ -164,6 +144,14 @@ export class RukassaPayment {
         }
     }
 
+    formatAmount(amount: number, currency: SupportedCurrency): string {
+        const curr = SUPPORTED_CURRENCIES.find(c => c.code === currency);
+        if (!curr) {
+            throw new Error('Неподдерживаемая валюта');
+        }
+        return amount.toFixed(curr.decimal_places);
+    }
+
     async createPayment(userId: number, packageId: number, currency: SupportedCurrency = 'RUB'): Promise<string> {
         const package_ = CREDIT_PACKAGES.find(p => p.id === packageId);
         if (!package_) {
@@ -176,7 +164,7 @@ export class RukassaPayment {
         }
 
         const merchantOrderId = `${userId}_${Date.now()}`;
-        const amount = package_.prices[currency].toString();
+        const amount = this.formatAmount(package_.prices[currency], currency);
         
         try {
             await this.pool.query(
@@ -404,7 +392,7 @@ export function setupRukassaWebhook(app: express.Express, rukassaPayment: Rukass
             });
         }
     });
-
+ 
     app.get('/payment/success', (req, res) => {
         res.send(`
             <html>
@@ -422,7 +410,7 @@ export function setupRukassaWebhook(app: express.Express, rukassaPayment: Rukass
             </html>
         `);
     });
-
+ 
     app.get('/payment/fail', (req, res) => {
         res.send(`
             <html>
@@ -440,7 +428,7 @@ export function setupRukassaWebhook(app: express.Express, rukassaPayment: Rukass
             </html>
         `);
     });
-
+ 
     app.get('/payment/back', (req, res) => {
         res.send(`
             <html>
@@ -458,7 +446,7 @@ export function setupRukassaWebhook(app: express.Express, rukassaPayment: Rukass
             </html>
         `);
     });
-
+ 
     app.get('/health', (req, res) => {
         res.json({
             status: 'ok',
@@ -466,4 +454,4 @@ export function setupRukassaWebhook(app: express.Express, rukassaPayment: Rukass
             webhook_url: `${WEBHOOK_URL}/rukassa/webhook`
         });
     });
-}
+ }
