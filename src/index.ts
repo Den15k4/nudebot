@@ -60,7 +60,7 @@ const pool = new Pool({
 const multiBotManager = new MultiBotManager(pool);
 
 // Инициализация основного бота
-const mainBot = new Telegraf(BOT_TOKEN);
+const mainBot = new Telegraf<Context<Update>>(BOT_TOKEN);
 
 // Инициализация API клиента
 const apiClient = axios.create({
@@ -327,6 +327,7 @@ function setupBotHandlers(bot: Telegraf<Context<Update>>, botId: string = 'main'
 
             processingMsg = await ctx.reply('⏳ Обрабатываю изображение, пожалуйста, подождите...');
 
+            // @ts-ignore
             const photo = ctx.message.photo[ctx.message.photo.length - 1];
             const file = await ctx.telegram.getFile(photo.file_id);
             
@@ -388,171 +389,170 @@ function setupBotHandlers(bot: Telegraf<Context<Update>>, botId: string = 'main'
             }
         }
     });
+
+    // Настройка платежной системы для бота
+    const rukassaPayment = new RukassaPayment(pool, bot, botId);
+    rukassaPayment.initPaymentsTable();
+    setupPaymentCommands(bot, pool, botId);
 }
-
-   // Настройка платежной системы для бота
-   const rukassaPayment = new RukassaPayment(pool, bot, botId);
-   rukassaPayment.initPaymentsTable();
-   setupPaymentCommands(bot, pool, botId);
-
 
 // Настройка webhook для обработки результатов
 app.post('/webhook', upload.any(), async (req, res) => {
-   try {
-       console.log('Получен webhook запрос');
-       console.log('Headers:', req.headers);
-       console.log('Body:', req.body);
-       console.log('Files:', req.files);
+    try {
+        console.log('Получен webhook запрос');
+        console.log('Headers:', req.headers);
+        console.log('Body:', req.body);
+        console.log('Files:', req.files);
 
-       const body = req.body as WebhookBody;
-       const files = req.files as Express.Multer.File[] || [];
+        const body = req.body as WebhookBody;
+        const files = req.files as Express.Multer.File[] || [];
 
-       // Извлекаем botId из id_gen (формат: botId_userId_timestamp)
-       const botId = body.id_gen?.split('_')[0] || 'main';
-       const bot = botId === 'main' ? mainBot : multiBotManager.getBot(botId);
+        // Извлекаем botId из id_gen (формат: botId_userId_timestamp)
+        const botId = body.id_gen?.split('_')[0] || 'main';
+        const bot = botId === 'main' ? mainBot : multiBotManager.getBot(botId);
 
-       if (!bot) {
-           throw new Error(`Бот ${botId} не найден`);
-       }
+        if (!bot) {
+            throw new Error(`Бот ${botId} не найден`);
+        }
 
-       if (body.status === '500' || body.img_message || body.img_message_2) {
-           console.log(`Ошибка обработки изображения: ${body.img_message || body.img_message_2}`);
-           
-           const userQuery = await pool.query(
-               'SELECT user_id FROM users WHERE pending_task_id = $1 AND bot_id = $2',
-               [body.id_gen, botId]
-           );
+        if (body.status === '500' || body.img_message || body.img_message_2) {
+            console.log(`Ошибка обработки изображения: ${body.img_message || body.img_message_2}`);
+            
+            const userQuery = await pool.query(
+                'SELECT user_id FROM users WHERE pending_task_id = $1 AND bot_id = $2',
+                [body.id_gen, botId]
+            );
 
-           if (userQuery.rows.length > 0) {
-               const userId = userQuery.rows[0].user_id;
-               let errorMessage = '❌ Не удалось обработать изображение:\n\n';
+            if (userQuery.rows.length > 0) {
+                const userId = userQuery.rows[0].user_id;
+                let errorMessage = '❌ Не удалось обработать изображение:\n\n';
 
-               if (body.img_message?.includes('Age is too young') || body.img_message_2?.includes('Age is too young')) {
-                   errorMessage += '🔞 На изображении обнаружен человек младше 18 лет.\n' +
-                                 'Обработка таких изображений запрещена.';
-               } else {
-                   errorMessage += body.img_message || body.img_message_2 || 'Неизвестная ошибка';
-               }
+                if (body.img_message?.includes('Age is too young') || body.img_message_2?.includes('Age is too young')) {
+                    errorMessage += '🔞 На изображении обнаружен человек младше 18 лет.\n' +
+                                  'Обработка таких изображений запрещена.';
+                } else {
+                    errorMessage += body.img_message || body.img_message_2 || 'Неизвестная ошибка';
+                }
 
-               try {
-                   await bot.telegram.sendMessage(userId, errorMessage);
-                   await returnCredit(userId, botId);
-                   await bot.telegram.sendMessage(userId, '💳 Кредит был возвращен из-за ошибки обработки.');
-                   
-                   await pool.query(
-                       'UPDATE users SET pending_task_id = NULL WHERE user_id = $1 AND bot_id = $2',
-                       [userId, botId]
-                   );
-               } catch (sendError) {
-                   console.error('Ошибка при отправке сообщения об ошибке:', sendError);
-               }
-           }
+                try {
+                    await bot.telegram.sendMessage(userId, errorMessage);
+                    await returnCredit(userId, botId);
+                    await bot.telegram.sendMessage(userId, '💳 Кредит был возвращен из-за ошибки обработки.');
+                    
+                    await pool.query(
+                        'UPDATE users SET pending_task_id = NULL WHERE user_id = $1 AND bot_id = $2',
+                        [userId, botId]
+                    );
+                } catch (sendError) {
+                    console.error('Ошибка при отправке сообщения об ошибке:', sendError);
+                }
+            }
 
-           return res.status(200).json({ success: true, error: body.img_message || body.img_message_2 });
-       }
+            return res.status(200).json({ success: true, error: body.img_message || body.img_message_2 });
+        }
 
-       if (!body.result && files.length === 0) {
-           console.log('Нет результата в запросе');
-           return res.status(200).json({ success: true });
-       }
+        if (!body.result && files.length === 0) {
+            console.log('Нет результата в запросе');
+            return res.status(200).json({ success: true });
+        }
 
-       const userQuery = await pool.query(
-           'SELECT user_id FROM users WHERE pending_task_id = $1 AND bot_id = $2',
-           [body.id_gen, botId]
-       );
+        const userQuery = await pool.query(
+            'SELECT user_id FROM users WHERE pending_task_id = $1 AND bot_id = $2',
+            [body.id_gen, botId]
+        );
 
-       if (userQuery.rows.length > 0) {
-           const userId = userQuery.rows[0].user_id;
+        if (userQuery.rows.length > 0) {
+            const userId = userQuery.rows[0].user_id;
 
-           try {
-               console.log('Отправка результата пользователю:', userId);
-               
-               let imageBuffer: Buffer | undefined;
-               if (body.result) {
-                   imageBuffer = Buffer.from(body.result, 'base64');
-               } else if (files.length > 0) {
-                   imageBuffer = files[0].buffer;
-               }
+            try {
+                console.log('Отправка результата пользователю:', userId);
+                
+                let imageBuffer: Buffer | undefined;
+                if (body.result) {
+                    imageBuffer = Buffer.from(body.result, 'base64');
+                } else if (files.length > 0) {
+                    imageBuffer = files[0].buffer;
+                }
 
-               if (imageBuffer) {
-                   await bot.telegram.sendPhoto(userId, { source: imageBuffer });
-                   await bot.telegram.sendMessage(userId, '✨ Обработка изображения завершена!');
-               }
+                if (imageBuffer) {
+                    await bot.telegram.sendPhoto(userId, { source: imageBuffer });
+                    await bot.telegram.sendMessage(userId, '✨ Обработка изображения завершена!');
+                }
 
-               await pool.query(
-                   'UPDATE users SET pending_task_id = NULL WHERE user_id = $1 AND bot_id = $2',
-                   [userId, botId]
-               );
-               console.log('Результат успешно отправлен пользователю');
-           } catch (sendError) {
-               console.error('Ошибка при отправке результата пользователю:', sendError);
-           }
-       } else {
-           console.log('Пользователь не найден для задачи:', body.id_gen);
-       }
+                await pool.query(
+                    'UPDATE users SET pending_task_id = NULL WHERE user_id = $1 AND bot_id = $2',
+                    [userId, botId]
+                );
+                console.log('Результат успешно отправлен пользователю');
+            } catch (sendError) {
+                console.error('Ошибка при отправке результата пользователю:', sendError);
+            }
+        } else {
+            console.log('Пользователь не найден для задачи:', body.id_gen);
+        }
 
-       res.status(200).json({ success: true });
-   } catch (error) {
-       console.error('Ошибка обработки webhook:', error);
-       res.status(500).json({ error: 'Internal server error' });
-   }
+        res.status(200).json({ success: true });
+    } catch (error) {
+        console.error('Ошибка обработки webhook:', error);
+        res.status(500).json({ error: 'Internal server error' });
+    }
 });
 
 // Маршрут проверки здоровья системы
 app.get('/health', (req, res) => {
-   res.status(200).json({ 
-       status: 'ok', 
-       timestamp: new Date().toISOString(),
-       botsCount: multiBotManager.getBotsCount()
-   });
+    res.status(200).json({ 
+        status: 'ok', 
+        timestamp: new Date().toISOString(),
+        botsCount: multiBotManager.getBotsCount()
+    });
 });
 
 // Запуск приложения
 async function start() {
-   try {
-       await initDB();
-       console.log('База данных инициализирована');
+    try {
+        await initDB();
+        console.log('База данных инициализирована');
 
-       // Настройка основного бота
-       setupBotHandlers(mainBot, 'main');
-       console.log('Основной бот настроен');
+        // Настройка основного бота
+        setupBotHandlers(mainBot, 'main');
+        console.log('Основной бот настроен');
 
-       // Загрузка дополнительных ботов
-       await multiBotManager.loadAllBots();
-       console.log('Дополнительные боты загружены');
+        // Загрузка дополнительных ботов
+        await multiBotManager.loadAllBots();
+        console.log('Дополнительные боты загружены');
 
-       // Настройка веб-хуков для платежей
-       setupRukassaWebhook(app, multiBotManager);
-       console.log('Платежные веб-хуки настроены');
+        // Настройка веб-хуков для платежей
+        setupRukassaWebhook(app, multiBotManager);
+        console.log('Платежные веб-хуки настроены');
 
-       // Запуск веб-сервера
-       app.listen(PORT, '0.0.0.0', () => {
-           console.log(`Webhook сервер запущен на порту ${PORT}`);
-       });
+        // Запуск веб-сервера
+        app.listen(PORT, '0.0.0.0', () => {
+            console.log(`Webhook сервер запущен на порту ${PORT}`);
+        });
 
-       // Запуск основного бота
-       await mainBot.launch();
-       console.log('Основной бот запущен');
+        // Запуск основного бота
+        await mainBot.launch();
+        console.log('Основной бот запущен');
 
-   } catch (error) {
-       console.error('Ошибка при запуске приложения:', error);
-       process.exit(1);
-   }
+    } catch (error) {
+        console.error('Ошибка при запуске приложения:', error);
+        process.exit(1);
+    }
 }
 
 // Graceful shutdown
 process.once('SIGINT', async () => {
-   console.log('Получен сигнал SIGINT, завершение работы...');
-   mainBot.stop('SIGINT');
-   await multiBotManager.stopAllBots();
-   await pool.end();
+    console.log('Получен сигнал SIGINT, завершение работы...');
+    mainBot.stop('SIGINT');
+    await multiBotManager.stopAllBots();
+    await pool.end();
 });
 
 process.once('SIGTERM', async () => {
-   console.log('Получен сигнал SIGTERM, завершение работы...');
-   mainBot.stop('SIGTERM');
-   await multiBotManager.stopAllBots();
-   await pool.end();
+    console.log('Получен сигнал SIGTERM, завершение работы...');
+    mainBot.stop('SIGTERM');
+    await multiBotManager.stopAllBots();
+    await pool.end();
 });
 
 // Запуск приложения
