@@ -1,6 +1,6 @@
-import { Telegraf, Context } from 'telegraf';
-import { Message } from 'telegraf/typings/core/types/typegram';
-import { Update } from 'typegram';
+import { Telegraf } from 'telegraf';
+import { Context as TelegrafContext } from 'telegraf';
+import { Message, Update } from 'telegraf/typings/core/types/typegram';
 import { message } from 'telegraf/filters';
 import axios from 'axios';
 import { Pool } from 'pg';
@@ -12,6 +12,11 @@ import { RukassaPayment, setupPaymentCommands, setupRukassaWebhook } from './ruk
 import { MultiBotManager } from './multibot';
 
 dotenv.config();
+
+// Определяем тип контекста
+type Context = TelegrafContext & {
+    message?: Update.MessageUpdate['message'];
+};
 
 // Конфигурационные параметры
 const BOT_TOKEN = process.env.BOT_TOKEN || '7543266158:AAETR2eLuk2joRxh6w2IvPePUw2LZa8_56U';
@@ -60,7 +65,7 @@ const pool = new Pool({
 const multiBotManager = new MultiBotManager(pool);
 
 // Инициализация основного бота
-const mainBot = new Telegraf<Context<Update>>(BOT_TOKEN);
+const mainBot = new Telegraf<Context>(BOT_TOKEN);
 
 // Инициализация API клиента
 const apiClient = axios.create({
@@ -98,7 +103,6 @@ async function initDB() {
     try {
         await client.query('BEGIN');
 
-        // Создание базовых таблиц
         await client.query(`
             CREATE TABLE IF NOT EXISTS users (
                 user_id BIGINT PRIMARY KEY,
@@ -119,7 +123,6 @@ async function initDB() {
             );
         `);
 
-        // Добавление основного бота, если его нет
         await client.query(`
             INSERT INTO bots (bot_id, token) 
             VALUES ('main', $1) 
@@ -265,8 +268,8 @@ async function processImage(imageBuffer: Buffer, userId: number, botId: string =
 }
 
 // Настройка обработчиков бота
-function setupBotHandlers(bot: Telegraf<Context<Update>>, botId: string = 'main') {
-    bot.command('start', async (ctx: Context) => {
+function setupBotHandlers(bot: Telegraf<Context>, botId: string = 'main') {
+    bot.command('start', async (ctx) => {
         try {
             const userId = ctx.from?.id;
             const username = ctx.from?.username;
@@ -291,7 +294,7 @@ function setupBotHandlers(bot: Telegraf<Context<Update>>, botId: string = 'main'
         }
     });
 
-    bot.command('credits', async (ctx: Context) => {
+    bot.command('credits', async (ctx) => {
         try {
             const userId = ctx.from?.id;
             if (!userId) return;
@@ -304,7 +307,7 @@ function setupBotHandlers(bot: Telegraf<Context<Update>>, botId: string = 'main'
         }
     });
 
-    bot.on(message('photo'), async (ctx: Context<Update.MessageUpdate>) => {
+    bot.on(message('photo'), async (ctx) => {
         const userId = ctx.from?.id;
         if (!userId) return;
 
@@ -327,7 +330,6 @@ function setupBotHandlers(bot: Telegraf<Context<Update>>, botId: string = 'main'
 
             processingMsg = await ctx.reply('⏳ Обрабатываю изображение, пожалуйста, подождите...');
 
-            // @ts-ignore
             const photo = ctx.message.photo[ctx.message.photo.length - 1];
             const file = await ctx.telegram.getFile(photo.file_id);
             
@@ -507,7 +509,7 @@ app.get('/health', (req, res) => {
     });
 });
 
-// Запуск приложения
+// Функция запуска приложения
 async function start() {
     try {
         await initDB();

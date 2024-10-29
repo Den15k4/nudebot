@@ -1,10 +1,15 @@
-import { Telegraf, Context } from 'telegraf';
-import { Markup } from 'telegraf/src/markup';
-import { Update } from 'typegram';
+import { Telegraf } from 'telegraf';
+import { Context as TelegrafContext } from 'telegraf';
+import { Message, Update } from 'telegraf/typings/core/types/typegram';
 import axios from 'axios';
 import { Pool } from 'pg';
 import express from 'express';
 import { MultiBotManager } from './multibot';
+
+// Определяем тип контекста
+type Context = TelegrafContext & {
+    message?: Update.MessageUpdate['message'];
+};
 
 // Основные конфигурационные параметры
 const SHOP_ID = process.env.SHOP_ID || '2660';
@@ -13,7 +18,7 @@ const RUKASSA_API_URL = 'https://lk.rukassa.pro/api/v1/create';
 const WEBHOOK_URL = process.env.WEBHOOK_URL?.replace('/webhook', '') || 'https://nudebot-production.up.railway.app';
 
 // Курсы валют к рублю
-const CURRENCY_RATES = {
+const CURRENCY_RATES: Record<SupportedCurrency, number> = {
     RUB: 1,
     KZT: 0.21,
     UZS: 0.0075,
@@ -100,12 +105,55 @@ const CREDIT_PACKAGES: PaymentPackage[] = [
     }
 ];
 
+interface PaymentPackage {
+    id: number;
+    credits: number;
+    prices: Record<SupportedCurrency, number>;
+    description: string;
+}
+
+interface Currency {
+    code: SupportedCurrency;
+    symbol: string;
+    name: string;
+    method: string;
+    minAmount: number;
+}
+
+type SupportedCurrency = 'RUB' | 'KZT' | 'UZS' | 'CRYPTO';
+
+interface RukassaCreatePaymentResponse {
+    status: boolean;
+    error?: string;
+    message?: string;
+    url?: string;
+    link?: string;
+    id?: number;
+    hash?: string;
+    order_id?: string;
+}
+
+interface RukassaWebhookBody {
+    shop_id: string;
+    amount: string;
+    order_id: string;
+    payment_status: string;
+    payment_method: string;
+    custom_fields: string;
+    merchant_order_id: string;
+    sign: string;
+    status?: string;
+    currency?: string;
+    description?: string;
+    test?: boolean;
+}
+
 export class RukassaPayment {
     private pool: Pool;
-    private bot: Telegraf<Context<Update>>;
+    private bot: Telegraf<Context>;
     private botId: string;
 
-    constructor(pool: Pool, bot: Telegraf<Context<Update>>, botId: string) {
+    constructor(pool: Pool, bot: Telegraf<Context>, botId: string) {
         this.pool = pool;
         this.bot = bot;
         this.botId = botId;
@@ -133,6 +181,8 @@ export class RukassaPayment {
                 
                 CREATE INDEX IF NOT EXISTS idx_payments_bot_id ON payments(bot_id);
                 CREATE INDEX IF NOT EXISTS idx_payments_partner_id ON payments(partner_id);
+                CREATE INDEX IF NOT EXISTS idx_payments_user_id ON payments(user_id);
+                CREATE INDEX IF NOT EXISTS idx_payments_status ON payments(status);
             `);
             console.log('Таблица payments успешно создана или обновлена');
         } catch (error) {
@@ -318,6 +368,12 @@ export class RukassaPayment {
                             [payment.partner_id, payment.id, payment.bot_id, 
                              payment.amount, commissionAmount, 'completed']
                         );
+
+                        // Обновляем сумму комиссии в платеже
+                        await client.query(
+                            'UPDATE payments SET commission_amount = $1 WHERE id = $2',
+                            [commissionAmount, payment.id]
+                        );
                     }
                 }
 
@@ -347,23 +403,32 @@ export class RukassaPayment {
     }
 }
 
-
-export function setupPaymentCommands(bot: Telegraf<Context<Update>>, pool: Pool, botId: string): void {
-    bot.command('buy', async (ctx: Context) => {
-        const keyboard = Markup.inlineKeyboard([
-            [Markup.button.callback('💳 Visa/MC (RUB)', `currency_${botId}_RUB`)],
-            [Markup.button.callback('💳 Visa/MC (KZT)', `currency_${botId}_KZT`)],
-            [Markup.button.callback('💳 Visa/MC (UZS)', `currency_${botId}_UZS`)],
-            [Markup.button.callback('💎 Криптовалюта', `currency_${botId}_CRYPTO`)]
-        ]);
-
-        await ctx.reply('💳 Выберите способ оплаты:', keyboard);
+// Настройка команд оплаты
+export function setupPaymentCommands(bot: Telegraf<Context>, pool: Pool, botId: string): void {
+    bot.command('buy', async (ctx) => {
+        try {
+            await ctx.reply('💳 Выберите способ оплаты:', {
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: '💳 Visa/MC (RUB)', callback_data: `currency_${botId}_RUB` }],
+                        [{ text: '💳 Visa/MC (KZT)', callback_data: `currency_${botId}_KZT` }],
+                        [{ text: '💳 Visa/MC (UZS)', callback_data: `currency_${botId}_UZS` }],
+                        [{ text: '💎 Криптовалюта', callback_data: `currency_${botId}_CRYPTO` }]
+                    ]
+                }
+            });
+        } catch (error) {
+            console.error('Ошибка при отображении меню оплаты:', error);
+            await ctx.reply('❌ Произошла ошибка. Попробуйте позже.');
+        }
     });
 
-    bot.action(/currency_(.+)_(.+)/, async (ctx: Context) => {
+    // Обработчик выбора валюты
+    bot.action(/currency_(.+)_(.+)/, async (ctx) => {
         try {
             const [, botIdFromAction, currency] = ctx.match;
             
+            // Проверяем, совпадает ли botId из action с текущим ботом
             if (botIdFromAction !== botId) {
                 await ctx.answerCbQuery('Недействительная кнопка');
                 return;
@@ -376,26 +441,28 @@ export function setupPaymentCommands(bot: Telegraf<Context<Update>>, pool: Pool,
                 return;
             }
 
-            const keyboard = {
-                inline_keyboard: CREDIT_PACKAGES.map(pkg => [
-                    Markup.button.callback(
-                        `${pkg.description} - ${pkg.prices[currency as SupportedCurrency]} ${curr.symbol}`,
-                        `buy_${botId}_${pkg.id}_${currency}`
-                    )
-                ])
-            };
+            // Создаем клавиатуру с пакетами
+            const keyboard = CREDIT_PACKAGES.map(pkg => [{
+                text: `${pkg.description} - ${pkg.prices[currency as SupportedCurrency]} ${curr.symbol}`,
+                callback_data: `buy_${botId}_${pkg.id}_${currency}`
+            }]);
 
             await ctx.answerCbQuery();
             await ctx.editMessageText(
                 `💳 Выберите пакет кредитов (цены в ${curr.name}):`,
-                { reply_markup: keyboard }
+                {
+                    reply_markup: {
+                        inline_keyboard: keyboard
+                    }
+                }
             );
         } catch (error) {
             console.error('Ошибка при выборе валюты:', error);
-            await ctx.reply('❌ Произошла ошибка. Попробуйте позже.');
+            await ctx.answerCbQuery('Произошла ошибка. Попробуйте позже.');
         }
     });
 
+    // Обработчик выбора пакета
     bot.action(/buy_(.+)_(\d+)_(.+)/, async (ctx) => {
         try {
             const [, botIdFromAction, packageId, currency] = ctx.match;
@@ -437,8 +504,8 @@ export function setupPaymentCommands(bot: Telegraf<Context<Update>>, pool: Pool,
     });
 }
 
+// Настройка webhook для Rukassa
 export function setupRukassaWebhook(app: express.Express, multiBotManager: MultiBotManager): void {
-    // Обработчик webhook от Rukassa
     app.post('/rukassa/webhook', express.json(), async (req, res) => {
         try {
             console.log('Получен webhook от Rukassa:');
@@ -447,6 +514,7 @@ export function setupRukassaWebhook(app: express.Express, multiBotManager: Multi
 
             const webhookData = req.body as RukassaWebhookBody;
             let customFields;
+            
             try {
                 customFields = JSON.parse(webhookData.custom_fields || '{}');
             } catch (error) {
@@ -475,12 +543,36 @@ export function setupRukassaWebhook(app: express.Express, multiBotManager: Multi
     });
 
     // Страницы результатов оплаты
-    app.get('/payment/success', (req, res) => {
-        res.send(`
+    function getPaymentPageHtml(title: string, status: 'success' | 'fail' | 'back'): string {
+        const colors = {
+            success: '#4CAF50',
+            fail: '#f44336',
+            back: '#2196F3'
+        };
+        
+        const emojis = {
+            success: '✅',
+            fail: '❌',
+            back: '↩️'
+        };
+
+        const messages = {
+            success: 'Оплата успешно завершена!',
+            fail: 'Ошибка оплаты',
+            back: 'Оплата отменена'
+        };
+
+        const descriptions = {
+            success: 'Вернитесь в Telegram бот для проверки баланса.',
+            fail: 'Вернитесь в Telegram бот и попробуйте снова.',
+            back: 'Вернитесь в Telegram бот для создания нового платежа.'
+        };
+
+        return `
             <!DOCTYPE html>
             <html>
                 <head>
-                    <title>Оплата успешна</title>
+                    <title>${title}</title>
                     <meta charset="utf-8">
                     <meta name="viewport" content="width=device-width, initial-scale=1">
                     <style>
@@ -503,7 +595,7 @@ export function setupRukassaWebhook(app: express.Express, multiBotManager: Multi
                             width: 400px;
                         }
                         h1 {
-                            color: #4CAF50;
+                            color: ${colors[status]};
                             margin-bottom: 1rem;
                         }
                         p {
@@ -518,178 +610,33 @@ export function setupRukassaWebhook(app: express.Express, multiBotManager: Multi
                 </head>
                 <body>
                     <div class="container">
-                        <div class="emoji">✅</div>
-                        <h1>Оплата успешно завершена!</h1>
-                        <p>Вернитесь в Telegram бот для проверки баланса.</p>
+                        <div class="emoji">${emojis[status]}</div>
+                        <h1>${messages[status]}</h1>
+                        <p>${descriptions[status]}</p>
                     </div>
                 </body>
             </html>
-        `);
+        `;
+    }
+
+    app.get('/payment/success', (req, res) => {
+        res.send(getPaymentPageHtml('Оплата успешна', 'success'));
     });
 
     app.get('/payment/fail', (req, res) => {
-        res.send(`
-            <!DOCTYPE html>
-            <html>
-                <head>
-                    <title>Ошибка оплаты</title>
-                    <meta charset="utf-8">
-                    <meta name="viewport" content="width=device-width, initial-scale=1">
-                    <style>
-                        body {
-                            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-                            display: flex;
-                            justify-content: center;
-                            align-items: center;
-                            height: 100vh;
-                            margin: 0;
-                            background-color: #f5f5f5;
-                        }
-                        .container {
-                            text-align: center;
-                            padding: 2rem;
-                            background: white;
-                            border-radius: 10px;
-                            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-                            max-width: 90%;
-                            width: 400px;
-                        }
-                        h1 {
-                            color: #f44336;
-                            margin-bottom: 1rem;
-                        }
-                        p {
-                            color: #666;
-                            line-height: 1.5;
-                        }
-                        .emoji {
-                            font-size: 3rem;
-                            margin-bottom: 1rem;
-                        }
-                    </style>
-                </head>
-                <body>
-                    <div class="container">
-                        <div class="emoji">❌</div>
-                        <h1>Ошибка оплаты</h1>
-                        <p>Вернитесь в Telegram бот и попробуйте снова.</p>
-                    </div>
-                </body>
-            </html>
-        `);
+        res.send(getPaymentPageHtml('Ошибка оплаты', 'fail'));
     });
 
     app.get('/payment/back', (req, res) => {
-        res.send(`
-            <!DOCTYPE html>
-            <html>
-                <head>
-                    <title>Отмена оплаты</title>
-                    <meta charset="utf-8">
-                    <meta name="viewport" content="width=device-width, initial-scale=1">
-                    <style>
-                        body {
-                            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-                            display: flex;
-                            justify-content: center;
-                            align-items: center;
-                            height: 100vh;
-                            margin: 0;
-                            background-color: #f5f5f5;
-                        }
-                        .container {
-                            text-align: center;
-                            padding: 2rem;
-                            background: white;
-                            border-radius: 10px;
-                            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-                            max-width: 90%;
-                            width: 400px;
-                        }
-                        h1 {
-                            color: #2196F3;
-                            margin-bottom: 1rem;
-                        }
-                        p {
-                            color: #666;
-                            line-height: 1.5;
-                        }
-                        .emoji {
-                            font-size: 3rem;
-                            margin-bottom: 1rem;
-                        }
-                    </style>
-                </head>
-                <body>
-                    <div class="container">
-                        <div class="emoji">↩️</div>
-                        <h1>Оплата отменена</h1>
-                        <p>Вернитесь в Telegram бот для создания нового платежа.</p>
-                    </div>
-                </body>
-            </html>
-        `);
+        res.send(getPaymentPageHtml('Отмена оплаты', 'back'));
     });
-}
-
-// Интерфейсы
-interface RukassaCreatePaymentResponse {
-    status: boolean;
-    error?: string;
-    message?: string;
-    url?: string;
-    link?: string;
-    id?: number;
-    hash?: string;
-    order_id?: string;
-}
-
-interface RukassaWebhookBody {
-    shop_id: string;
-    amount: string;
-    order_id: string;
-    payment_status: string;
-    payment_method: string;
-    custom_fields: string;
-    merchant_order_id: string;
-    sign: string;
-    status?: string;
-    currency?: string;
-    description?: string;
-    test?: boolean;
-}
-
-interface Price {
-    [key: string]: number;
-    RUB: number;
-    KZT: number;
-    UZS: number;
-    CRYPTO: number;
-}
-
-type SupportedCurrency = 'RUB' | 'KZT' | 'UZS' | 'CRYPTO';
-
-interface Currency {
-    code: SupportedCurrency;
-    symbol: string;
-    name: string;
-    method: string;
-    minAmount: number;
-}
-
-interface PaymentPackage {
-    id: number;
-    credits: number;
-    prices: Price;
-    description: string;
 }
 
 // Экспорт типов
 export type {
     RukassaCreatePaymentResponse,
     RukassaWebhookBody,
-    Price,
-    SupportedCurrency,
+    PaymentPackage,
     Currency,
-    PaymentPackage
+    SupportedCurrency
 };

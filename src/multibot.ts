@@ -1,7 +1,13 @@
-import { Telegraf, Context } from 'telegraf';
-import { Update } from 'typegram';
+import { Telegraf } from 'telegraf';
+import { Context as TelegrafContext } from 'telegraf';
+import { Message, Update } from 'telegraf/typings/core/types/typegram';
 import { Pool } from 'pg';
 import { RukassaPayment } from './rukassa';
+
+// Определяем тип контекста
+type Context = TelegrafContext & {
+    message?: Update.MessageUpdate['message'];
+};
 
 interface BotConfig {
     bot_id: string;
@@ -12,7 +18,7 @@ interface BotConfig {
 }
 
 export class MultiBotManager {
-    private bots: Map<string, Telegraf<Context<Update>>> = new Map();
+    private bots: Map<string, Telegraf<Context>> = new Map();
     private payments: Map<string, RukassaPayment> = new Map();
     private pool: Pool;
 
@@ -22,72 +28,234 @@ export class MultiBotManager {
 
     async initializeBot(config: BotConfig): Promise<void> {
         try {
-            const bot = new Telegraf<Context<Update>>(config.token);
+            // Проверяем, не запущен ли уже бот с таким ID
+            if (this.bots.has(config.bot_id)) {
+                console.log(`Бот ${config.bot_id} уже запущен`);
+                return;
+            }
+
+            // Создаем нового бота
+            const bot = new Telegraf<Context>(config.token);
             
-            // Создание экземпляра платежной системы для бота
+            // Создаем экземпляр платежной системы для бота
             const payment = new RukassaPayment(this.pool, bot, config.bot_id);
             
-            // Сохранение экземпляров
+            // Сохраняем экземпляры
             this.bots.set(config.bot_id, bot);
             this.payments.set(config.bot_id, payment);
 
-            // Запуск бота
+            // Инициализируем платежную систему
+            await payment.initPaymentsTable();
+
+            // Настраиваем webhook если указан URL
             if (config.webhook_url) {
                 await bot.telegram.setWebhook(config.webhook_url);
+                console.log(`Webhook установлен для бота ${config.bot_id}: ${config.webhook_url}`);
             }
-            await bot.launch();
 
-            console.log(`Bot ${config.bot_id} initialized successfully`);
+            // Запускаем бота
+            await bot.launch();
+            console.log(`Бот ${config.bot_id} успешно инициализирован`);
+
         } catch (error) {
-            console.error(`Failed to initialize bot ${config.bot_id}:`, error);
+            console.error(`Ошибка при инициализации бота ${config.bot_id}:`, error);
+            
+            // Очищаем созданные экземпляры в случае ошибки
+            this.bots.delete(config.bot_id);
+            this.payments.delete(config.bot_id);
+            
             throw error;
         }
     }
 
     async loadAllBots(): Promise<void> {
         try {
+            // Получаем все активные боты из базы данных
             const result = await this.pool.query(
                 'SELECT * FROM bots WHERE status = $1',
                 ['active']
             );
 
+            console.log(`Найдено ${result.rows.length} активных ботов`);
+
+            // Инициализируем каждого бота
             for (const botConfig of result.rows) {
-                await this.initializeBot(botConfig);
+                try {
+                    await this.initializeBot(botConfig);
+                } catch (error) {
+                    console.error(`Ошибка при загрузке бота ${botConfig.bot_id}:`, error);
+                    // Продолжаем загрузку остальных ботов
+                    continue;
+                }
             }
 
-            console.log(`Loaded ${result.rows.length} bots successfully`);
+            console.log(`Загружено ${this.bots.size} ботов`);
         } catch (error) {
-            console.error('Failed to load bots:', error);
+            console.error('Ошибка при загрузке ботов:', error);
             throw error;
         }
     }
 
-    getBot(botId: string): Telegraf<Context<Update>> | undefined {
-        return this.bots.get(botId);
+    async addBot(config: BotConfig): Promise<void> {
+        const client = await this.pool.connect();
+        try {
+            await client.query('BEGIN');
+
+            // Добавляем бота в базу данных
+            await client.query(
+                `INSERT INTO bots (bot_id, token, partner_id, webhook_url, settings)
+                 VALUES ($1, $2, $3, $4, $5)
+                 ON CONFLICT (bot_id) DO UPDATE
+                 SET token = $2, partner_id = $3, webhook_url = $4, settings = $5`,
+                [config.bot_id, config.token, config.partner_id, config.webhook_url, config.settings]
+            );
+
+            // Инициализируем бота
+            await this.initializeBot(config);
+
+            await client.query('COMMIT');
+            console.log(`Бот ${config.bot_id} успешно добавлен`);
+        } catch (error) {
+            await client.query('ROLLBACK');
+            console.error(`Ошибка при добавлении бота ${config.bot_id}:`, error);
+            throw error;
+        } finally {
+            client.release();
+        }
     }
 
+    async removeBot(botId: string): Promise<void> {
+        const client = await this.pool.connect();
+        try {
+            await client.query('BEGIN');
+
+            // Останавливаем бота
+            await this.stopBot(botId);
+
+            // Удаляем бота из базы данных
+            await client.query(
+                'UPDATE bots SET status = $1 WHERE bot_id = $2',
+                ['inactive', botId]
+            );
+
+            await client.query('COMMIT');
+            console.log(`Бот ${botId} успешно удален`);
+        } catch (error) {
+            await client.query('ROLLBACK');
+            console.error(`Ошибка при удалении бота ${botId}:`, error);
+            throw error;
+        } finally {
+            client.release();
+        }
+    }
+
+    async updateBotSettings(botId: string, settings: Record<string, any>): Promise<void> {
+        const client = await this.pool.connect();
+        try {
+            await client.query('BEGIN');
+
+            // Обновляем настройки в базе данных
+            await client.query(
+                'UPDATE bots SET settings = $1 WHERE bot_id = $2',
+                [settings, botId]
+            );
+
+            // Перезапускаем бота с новыми настройками
+            const bot = this.bots.get(botId);
+            if (bot) {
+                await this.stopBot(botId);
+                const botConfig = (await client.query(
+                    'SELECT * FROM bots WHERE bot_id = $1',
+                    [botId]
+                )).rows[0];
+                await this.initializeBot(botConfig);
+            }
+
+            await client.query('COMMIT');
+            console.log(`Настройки бота ${botId} успешно обновлены`);
+        } catch (error) {
+            await client.query('ROLLBACK');
+            console.error(`Ошибка при обновлении настроек бота ${botId}:`, error);
+            throw error;
+        } finally {
+            client.release();
+        }
+    }
+
+    getBot(botId: string): Telegraf<Context> | undefined {
+        return this.bots.get(botId);
+    }
 
     getPayment(botId: string): RukassaPayment | undefined {
         return this.payments.get(botId);
     }
 
+    getBotsCount(): number {
+        return this.bots.size;
+    }
+
     async stopBot(botId: string): Promise<void> {
         const bot = this.bots.get(botId);
         if (bot) {
-            await bot.stop();
-            this.bots.delete(botId);
-            this.payments.delete(botId);
-            console.log(`Bot ${botId} stopped successfully`);
+            try {
+                // Отключаем webhook
+                await bot.telegram.deleteWebhook();
+                // Останавливаем бота
+                await bot.stop();
+                // Удаляем экземпляры из памяти
+                this.bots.delete(botId);
+                this.payments.delete(botId);
+                console.log(`Бот ${botId} успешно остановлен`);
+            } catch (error) {
+                console.error(`Ошибка при остановке бота ${botId}:`, error);
+                throw error;
+            }
         }
     }
 
     async stopAllBots(): Promise<void> {
+        const errors: Error[] = [];
+        
+        // Останавливаем все боты
         for (const [botId] of this.bots) {
-            await this.stopBot(botId);
+            try {
+                await this.stopBot(botId);
+            } catch (error) {
+                errors.push(error as Error);
+                console.error(`Ошибка при остановке бота ${botId}:`, error);
+            }
+        }
+
+        // Очищаем все коллекции
+        this.bots.clear();
+        this.payments.clear();
+
+        if (errors.length > 0) {
+            throw new Error(`Произошли ошибки при остановке ботов: ${errors.map(e => e.message).join(', ')}`);
         }
     }
 
-    getBotsCount(): number {
-        return this.bots.size;
+    // Получение статистики по ботам
+    async getBotsStatistics(): Promise<Record<string, any>> {
+        try {
+            const stats = await this.pool.query(`
+                SELECT 
+                    b.bot_id,
+                    b.partner_id,
+                    COUNT(DISTINCT u.user_id) as users_count,
+                    COUNT(p.id) as payments_count,
+                    COALESCE(SUM(p.amount), 0) as total_amount
+                FROM bots b
+                LEFT JOIN users u ON b.bot_id = u.bot_id
+                LEFT JOIN payments p ON b.bot_id = p.bot_id
+                WHERE b.status = 'active'
+                GROUP BY b.bot_id, b.partner_id
+            `);
+
+            return stats.rows;
+        } catch (error) {
+            console.error('Ошибка при получении статистики ботов:', error);
+            throw error;
+        }
     }
 }
