@@ -1,4 +1,6 @@
-import { Telegraf, Markup } from 'telegraf';
+import { Telegraf, Context } from 'telegraf';
+import { Markup } from 'telegraf/src/markup';
+import { Update } from 'typegram';
 import axios from 'axios';
 import { Pool } from 'pg';
 import express from 'express';
@@ -100,10 +102,10 @@ const CREDIT_PACKAGES: PaymentPackage[] = [
 
 export class RukassaPayment {
     private pool: Pool;
-    private bot: Telegraf;
+    private bot: Telegraf<Context<Update>>;
     private botId: string;
 
-    constructor(pool: Pool, bot: Telegraf, botId: string) {
+    constructor(pool: Pool, bot: Telegraf<Context<Update>>, botId: string) {
         this.pool = pool;
         this.bot = bot;
         this.botId = botId;
@@ -345,8 +347,9 @@ export class RukassaPayment {
     }
 }
 
-export function setupPaymentCommands(bot: Telegraf, pool: Pool, botId: string): void {
-    bot.command('buy', async (ctx) => {
+
+export function setupPaymentCommands(bot: Telegraf<Context<Update>>, pool: Pool, botId: string): void {
+    bot.command('buy', async (ctx: Context) => {
         const keyboard = Markup.inlineKeyboard([
             [Markup.button.callback('💳 Visa/MC (RUB)', `currency_${botId}_RUB`)],
             [Markup.button.callback('💳 Visa/MC (KZT)', `currency_${botId}_KZT`)],
@@ -357,7 +360,7 @@ export function setupPaymentCommands(bot: Telegraf, pool: Pool, botId: string): 
         await ctx.reply('💳 Выберите способ оплаты:', keyboard);
     });
 
-    bot.action(/currency_(.+)_(.+)/, async (ctx) => {
+    bot.action(/currency_(.+)_(.+)/, async (ctx: Context) => {
         try {
             const [, botIdFromAction, currency] = ctx.match;
             

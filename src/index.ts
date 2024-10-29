@@ -1,4 +1,6 @@
-import { Telegraf } from 'telegraf';
+import { Telegraf, Context } from 'telegraf';
+import { Message } from 'telegraf/typings/core/types/typegram';
+import { Update } from 'typegram';
 import { message } from 'telegraf/filters';
 import axios from 'axios';
 import { Pool } from 'pg';
@@ -263,11 +265,15 @@ async function processImage(imageBuffer: Buffer, userId: number, botId: string =
 }
 
 // Настройка обработчиков бота
-function setupBotHandlers(bot: Telegraf, botId: string = 'main') {
-    bot.command('start', async (ctx) => {
+function setupBotHandlers(bot: Telegraf<Context<Update>>, botId: string = 'main') {
+    bot.command('start', async (ctx: Context) => {
         try {
-            const userId = ctx.from.id;
-            const username = ctx.from.username;
+            const userId = ctx.from?.id;
+            const username = ctx.from?.username;
+
+            if (!userId) {
+                return;
+            }
 
             await addNewUser(userId, username, botId);
             
@@ -285,9 +291,11 @@ function setupBotHandlers(bot: Telegraf, botId: string = 'main') {
         }
     });
 
-    bot.command('credits', async (ctx) => {
+    bot.command('credits', async (ctx: Context) => {
         try {
-            const userId = ctx.from.id;
+            const userId = ctx.from?.id;
+            if (!userId) return;
+
             const credits = await checkCredits(userId, botId);
             await ctx.reply(`💳 У вас осталось кредитов: ${credits}`);
         } catch (error) {
@@ -296,8 +304,10 @@ function setupBotHandlers(bot: Telegraf, botId: string = 'main') {
         }
     });
 
-    bot.on(message('photo'), async (ctx) => {
-        const userId = ctx.from.id;
+    bot.on(message('photo'), async (ctx: Context<Update.MessageUpdate>) => {
+        const userId = ctx.from?.id;
+        if (!userId) return;
+
         let processingMsg;
         
         try {
@@ -378,6 +388,7 @@ function setupBotHandlers(bot: Telegraf, botId: string = 'main') {
             }
         }
     });
+}
 
    // Настройка платежной системы для бота
    const rukassaPayment = new RukassaPayment(pool, bot, botId);

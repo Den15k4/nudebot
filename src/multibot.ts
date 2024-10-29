@@ -1,4 +1,5 @@
-import { Telegraf } from 'telegraf';
+import { Telegraf, Context } from 'telegraf';
+import { Update } from 'typegram';
 import { Pool } from 'pg';
 import { RukassaPayment } from './rukassa';
 
@@ -11,7 +12,7 @@ interface BotConfig {
 }
 
 export class MultiBotManager {
-    private bots: Map<string, Telegraf> = new Map();
+    private bots: Map<string, Telegraf<Context<Update>>> = new Map();
     private payments: Map<string, RukassaPayment> = new Map();
     private pool: Pool;
 
@@ -21,7 +22,7 @@ export class MultiBotManager {
 
     async initializeBot(config: BotConfig): Promise<void> {
         try {
-            const bot = new Telegraf(config.token);
+            const bot = new Telegraf<Context<Update>>(config.token);
             
             // Создание экземпляра платежной системы для бота
             const payment = new RukassaPayment(this.pool, bot, config.bot_id);
@@ -61,9 +62,10 @@ export class MultiBotManager {
         }
     }
 
-    getBot(botId: string): Telegraf | undefined {
+    getBot(botId: string): Telegraf<Context<Update>> | undefined {
         return this.bots.get(botId);
     }
+
 
     getPayment(botId: string): RukassaPayment | undefined {
         return this.payments.get(botId);
