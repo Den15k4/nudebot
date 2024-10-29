@@ -3,7 +3,7 @@ import axios from 'axios';
 import { Pool } from 'pg';
 import express from 'express';
 import { MultiBotManager } from './multibot';
-import { BotContext, CommandContext, CallbackContext } from './types';
+import { BotContext, MessageContext, CallbackContext } from './types';
 
 // Используем тот же интерфейс контекста
 interface BotContext extends Context {
@@ -404,9 +404,9 @@ export class RukassaPayment {
 
 // Настройка команд оплаты
 export function setupPaymentCommands(bot: Telegraf<BotContext>, pool: Pool, botId: string): void {
-    bot.command('buy', async (ctx: CommandContext) => {
+    bot.command('buy', async (ctx: MessageContext) => {
         try {
-            await ctx.reply('💳 Выберите способ оплаты:', {
+            await ctx.telegram.sendMessage(ctx.message.chat.id, '💳 Выберите способ оплаты:', {
                 reply_markup: {
                     inline_keyboard: [
                         [{ text: '💳 Visa/MC (RUB)', callback_data: `currency_${botId}_RUB` }],
@@ -418,13 +418,13 @@ export function setupPaymentCommands(bot: Telegraf<BotContext>, pool: Pool, botI
             });
         } catch (error) {
             console.error('Ошибка при отображении меню оплаты:', error);
-            await ctx.reply('❌ Произошла ошибка. Попробуйте позже.');
+            await ctx.telegram.sendMessage(ctx.message.chat.id, '❌ Произошла ошибка. Попробуйте позже.');
         }
     });
 
     bot.action(/currency_(.+)_(.+)/, async (ctx: CallbackContext) => {
         try {
-            const [, botIdFromAction, currency] = ctx.match;
+            const [, botIdFromAction, currency] = ctx.match || [];
             
             // Проверяем, совпадает ли botId из action с текущим ботом
             if (botIdFromAction !== botId) {

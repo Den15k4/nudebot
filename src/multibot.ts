@@ -12,8 +12,8 @@ interface BotConfig {
 }
 
 export class MultiBotManager {
-    private bots: Map<string, Telegraf<BotContext>> = new Map();
-    private payments: Map<string, RukassaPayment> = new Map();
+    private bots = new Map<string, Telegraf<BotContext>>();
+    private payments = new Map<string, RukassaPayment>();
     private pool: Pool;
 
     constructor(pool: Pool) {

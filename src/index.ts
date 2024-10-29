@@ -1,6 +1,5 @@
 import { Telegraf } from 'telegraf';
 import { message } from 'telegraf/filters';
-import { Message, Update } from 'telegraf/types';
 import axios from 'axios';
 import { Pool } from 'pg';
 import dotenv from 'dotenv';
@@ -9,7 +8,7 @@ import express from 'express';
 import multer from 'multer';
 import { RukassaPayment, setupPaymentCommands, setupRukassaWebhook } from './rukassa';
 import { MultiBotManager } from './multibot';
-import { BotContext, CommandContext } from './types';
+import { BotContext, MessageContext } from './types';
 
 dotenv.config();
 
@@ -268,16 +267,15 @@ async function processImage(imageBuffer: Buffer, userId: number, botId: string =
 
 // Настройка обработчиков бота
 function setupBotHandlers(bot: Telegraf<BotContext>, botId: string = 'main') {
-    bot.command('start', async (ctx: CommandContext) => {
+    bot.command('start', async (ctx: MessageContext) => {
         try {
-            const userId = ctx.from?.id;
-            const username = ctx.from?.username;
-
-            if (!userId) return;
+            const userId = ctx.message.from.id;
+            const username = ctx.message.from.username;
 
             await addNewUser(userId, username, botId);
             
-            await ctx.reply(
+            await ctx.telegram.sendMessage(
+                ctx.message.chat.id,
                 'Привет! Я бот для обработки изображений.\n' +
                 'У вас есть 1 бесплатный кредит.\n' +
                 'Отправьте мне изображение, и я обработаю его.\n\n' +
@@ -287,7 +285,7 @@ function setupBotHandlers(bot: Telegraf<BotContext>, botId: string = 'main') {
             );
         } catch (error) {
             console.error('Ошибка в команде start:', error);
-            await ctx.reply('Произошла ошибка при запуске бота. Попробуйте позже.');
+            await ctx.telegram.sendMessage(ctx.message.chat.id, 'Произошла ошибка при запуске бота. Попробуйте позже.');
         }
     });
 
