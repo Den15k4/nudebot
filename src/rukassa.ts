@@ -149,33 +149,6 @@ const CREDIT_PACKAGES: PaymentPackage[] = [
     }
 ];
 
-// Клавиатуры
-const currencyKeyboard = {
-    inline_keyboard: [
-        [{ text: '💳 Visa/MC (RUB)', callback_data: 'currency_RUB' }],
-        [{ text: '💳 Visa/MC (KZT)', callback_data: 'currency_KZT' }],
-        [{ text: '💳 Visa/MC (UZS)', callback_data: 'currency_UZS' }],
-        [{ text: '💎 Криптовалюта', callback_data: 'currency_CRYPTO' }]
-    ]
-};
-
-const createPackagesKeyboard = (currency: SupportedCurrency, curr: Currency) => ({
-    inline_keyboard: [
-        ...CREDIT_PACKAGES.map(pkg => [{
-            text: `${pkg.description} - ${pkg.prices[currency]} ${curr.symbol}`,
-            callback_data: `buy_${pkg.id}_${currency}`
-        }]),
-        [{ text: '↩️ Назад к способам оплаты', callback_data: 'show_payment_methods' }]
-    ]
-});
-
-const createPaymentKeyboard = (paymentUrl: string, currency: SupportedCurrency) => ({
-    inline_keyboard: [
-        [{ text: '💳 Перейти к оплате', url: paymentUrl }],
-        [{ text: '↩️ Назад к выбору пакета', callback_data: `currency_${currency}` }]
-    ]
-});
-
 export class RukassaPayment {
     private pool: Pool;
     private bot: Telegraf;
@@ -189,11 +162,7 @@ export class RukassaPayment {
         const client = await this.pool.connect();
         try {
             await client.query('BEGIN');
-    
-            // Удаляем существующую таблицу
             await client.query('DROP TABLE IF EXISTS payments CASCADE;');
-    
-            // Создаем таблицу заново
             await client.query(`
                 CREATE TABLE payments (
                     id SERIAL PRIMARY KEY,
@@ -207,14 +176,10 @@ export class RukassaPayment {
                     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
                 );
-            `);
-    
-            // Создаем индексы для оптимизации
-            await client.query(`
+
                 CREATE INDEX idx_payments_user_id ON payments(user_id);
                 CREATE INDEX idx_payments_merchant_order_id ON payments(merchant_order_id);
             `);
-    
             await client.query('COMMIT');
             console.log('Таблица payments успешно создана');
         } catch (error) {
@@ -351,12 +316,28 @@ export class RukassaPayment {
                 await this.bot.telegram.sendMessage(
                     user_id,
                     `✅ Оплата ${amount} ${curr?.symbol || currency} успешно получена!\n` +
-                    `💫 На ваш счет зачислено ${credits} кредитов.`
+                    `💫 На ваш счет зачислено ${credits} кредитов.`,
+                    {
+                        reply_markup: {
+                            inline_keyboard: [
+                                [{ text: '💫 Начать обработку', callback_data: 'start_processing' }],
+                                [{ text: '↩️ В главное меню', callback_data: 'back_to_menu' }]
+                            ]
+                        }
+                    }
                 );
             } else if (data.payment_status === 'failed') {
                 await this.bot.telegram.sendMessage(
                     user_id,
-                    '❌ Оплата не была завершена. Попробуйте снова или выберите другой способ оплаты.'
+                    '❌ Оплата не была завершена. Попробуйте снова или выберите другой способ оплаты.',
+                    {
+                        reply_markup: {
+                            inline_keyboard: [
+                                [{ text: '💳 Попробовать снова', callback_data: 'buy_credits' }],
+                                [{ text: '↩️ В главное меню', callback_data: 'back_to_menu' }]
+                            ]
+                        }
+                    }
                 );
             }
 
@@ -373,16 +354,6 @@ export class RukassaPayment {
 }
 
 export function setupPaymentCommands(bot: Telegraf, pool: Pool): void {
-    bot.hears('💳 Купить кредиты', async (ctx) => {
-        await ctx.replyWithPhoto(
-            { source: './assets/payment.jpg' },
-            {
-                caption: '💳 Выберите способ оплаты:',
-                reply_markup: currencyKeyboard
-            }
-        );
-    });
-
     bot.action(/currency_(.+)/, async (ctx) => {
         try {
             const currency = ctx.match[1] as SupportedCurrency;
@@ -393,17 +364,25 @@ export function setupPaymentCommands(bot: Telegraf, pool: Pool): void {
                 return;
             }
 
+            const packagesKeyboard = {
+                inline_keyboard: [
+                    ...CREDIT_PACKAGES.map(pkg => [{
+                        text: `${pkg.description} - ${pkg.prices[currency]} ${curr.symbol}`,
+                        callback_data: `buy_${pkg.id}_${currency}`
+                    }]),
+                    [{ text: '↩️ Назад к способам оплаты', callback_data: 'buy_credits' }]
+                ]
+            };
+
             await ctx.answerCbQuery();
             await ctx.editMessageCaption(
                 `💫 Выберите пакет кредитов (${curr.name}):\n\n` +
                 `ℹ️ Чем больше пакет, тем выгоднее цена за кредит!`,
-                {
-                    reply_markup: createPackagesKeyboard(currency, curr)
-                }
+                { reply_markup: packagesKeyboard }
             );
         } catch (error) {
             console.error('Ошибка при выборе валюты:', error);
-            await ctx.reply('❌ Произошла ошибка. Попробуйте позже.');
+            await ctx.answerCbQuery('Произошла ошибка. Попробуйте позже.');
         }
     });
 
@@ -426,6 +405,13 @@ export function setupPaymentCommands(bot: Telegraf, pool: Pool): void {
             const package_ = CREDIT_PACKAGES.find(p => p.id === packageId);
             const curr = SUPPORTED_CURRENCIES.find(c => c.code === currency);
 
+            const paymentKeyboard = {
+                inline_keyboard: [
+                    [{ text: '💳 Перейти к оплате', url: paymentUrl }],
+                    [{ text: '↩️ Назад к выбору пакета', callback_data: `currency_${currency}` }]
+                ]
+            };
+
             await ctx.editMessageMedia(
                 {
                     type: 'photo',
@@ -436,31 +422,22 @@ export function setupPaymentCommands(bot: Telegraf, pool: Pool): void {
                             '✅ Нажмите кнопку ниже для перехода к оплате.\n' +
                             '⚡️ После оплаты кредиты будут начислены автоматически!'
                 },
-                {
-                    reply_markup: createPaymentKeyboard(paymentUrl, currency)
-                }
+                { reply_markup: paymentKeyboard }
             );
         } catch (error) {
             console.error('Ошибка при создании платежа:', error);
-            await ctx.reply('❌ Произошла ошибка при создании платежа. Попробуйте позже.');
-        }
-    });
-
-    bot.action('show_payment_methods', async (ctx) => {
-        try {
-            await ctx.editMessageMedia(
+            await ctx.reply(
+                '❌ Произошла ошибка при создании платежа.\n' +
+                'Пожалуйста, попробуйте позже или выберите другой способ оплаты.',
                 {
-                    type: 'photo',
-                    media: { source: './assets/payment.jpg' },
-                    caption: '💳 Выберите способ оплаты:'
-                },
-                {
-                    reply_markup: currencyKeyboard
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: '↩️ Вернуться к выбору', callback_data: 'buy_credits' }],
+                            [{ text: '🏠 В главное меню', callback_data: 'back_to_menu' }]
+                        ]
+                    }
                 }
             );
-        } catch (error) {
-            console.error('Ошибка при возврате к способам оплаты:', error);
-            await ctx.answerCbQuery('Произошла ошибка. Попробуйте позже.');
         }
     });
 }
@@ -485,7 +462,6 @@ export function setupRukassaWebhook(app: express.Express, rukassaPayment: Rukass
         }
     });
 
-    // Страница успешной оплаты
     app.get('/payment/success', (req, res) => {
         res.send(`
             <!DOCTYPE html>
@@ -503,6 +479,7 @@ export function setupRukassaWebhook(app: express.Express, rukassaPayment: Rukass
                         min-height: 100vh;
                         margin: 0;
                         background-color: #f0f2f5;
+                        color: #1a1a1a;
                     }
                     .container {
                         text-align: center;
@@ -514,24 +491,39 @@ export function setupRukassaWebhook(app: express.Express, rukassaPayment: Rukass
                         width: 400px;
                     }
                     .success-icon {
-                        color: #4CAF50;
-                        font-size: 48px;
+                        font-size: 64px;
                         margin-bottom: 1rem;
+                        animation: bounce 1s ease infinite;
                     }
-                    h1 { color: #4CAF50; margin: 0.5rem 0; }
-                    p { color: #666; line-height: 1.5; }
+                    @keyframes bounce {
+                        0%, 100% { transform: translateY(0); }
+                        50% { transform: translateY(-10px); }
+                    }
+                    h1 {
+                        color: #4CAF50;
+                        margin: 0.5rem 0;
+                        font-size: 24px;
+                    }
+                    p {
+                        color: #666;
+                        line-height: 1.5;
+                        margin: 1rem 0;
+                    }
                     .telegram-button {
                         display: inline-block;
                         background-color: #0088cc;
                         color: white;
-                        padding: 10px 20px;
-                        border-radius: 5px;
+                        padding: 12px 24px;
+                        border-radius: 8px;
                         text-decoration: none;
                         margin-top: 1rem;
-                        transition: background-color 0.3s;
+                        transition: all 0.3s ease;
+                        font-weight: bold;
                     }
                     .telegram-button:hover {
                         background-color: #006699;
+                        transform: translateY(-2px);
+                        box-shadow: 0 4px 12px rgba(0,136,204,0.3);
                     }
                 </style>
             </head>
@@ -550,7 +542,6 @@ export function setupRukassaWebhook(app: express.Express, rukassaPayment: Rukass
         `);
     });
 
-    // Страница неудачной оплаты
     app.get('/payment/fail', (req, res) => {
         res.send(`
             <!DOCTYPE html>
@@ -568,6 +559,7 @@ export function setupRukassaWebhook(app: express.Express, rukassaPayment: Rukass
                         min-height: 100vh;
                         margin: 0;
                         background-color: #f0f2f5;
+                        color: #1a1a1a;
                     }
                     .container {
                         text-align: center;
@@ -579,24 +571,40 @@ export function setupRukassaWebhook(app: express.Express, rukassaPayment: Rukass
                         width: 400px;
                     }
                     .error-icon {
-                        color: #f44336;
-                        font-size: 48px;
+                        font-size: 64px;
                         margin-bottom: 1rem;
+                        animation: shake 0.5s ease-in-out;
                     }
-                    h1 { color: #f44336; margin: 0.5rem 0; }
-                    p { color: #666; line-height: 1.5; }
+                    @keyframes shake {
+                        0%, 100% { transform: translateX(0); }
+                        25% { transform: translateX(-10px); }
+                        75% { transform: translateX(10px); }
+                    }
+                    h1 {
+                        color: #f44336;
+                        margin: 0.5rem 0;
+                        font-size: 24px;
+                    }
+                    p {
+                        color: #666;
+                        line-height: 1.5;
+                        margin: 1rem 0;
+                    }
                     .telegram-button {
                         display: inline-block;
                         background-color: #0088cc;
                         color: white;
-                        padding: 10px 20px;
-                        border-radius: 5px;
+                        padding: 12px 24px;
+                        border-radius: 8px;
                         text-decoration: none;
                         margin-top: 1rem;
-                        transition: background-color 0.3s;
+                        transition: all 0.3s ease;
+                        font-weight: bold;
                     }
                     .telegram-button:hover {
                         background-color: #006699;
+                        transform: translateY(-2px);
+                        box-shadow: 0 4px 12px rgba(0,136,204,0.3);
                     }
                 </style>
             </head>
@@ -615,7 +623,6 @@ export function setupRukassaWebhook(app: express.Express, rukassaPayment: Rukass
         `);
     });
 
-    // Страница отмены оплаты
     app.get('/payment/back', (req, res) => {
         res.send(`
             <!DOCTYPE html>
@@ -633,6 +640,7 @@ export function setupRukassaWebhook(app: express.Express, rukassaPayment: Rukass
                         min-height: 100vh;
                         margin: 0;
                         background-color: #f0f2f5;
+                        color: #1a1a1a;
                     }
                     .container {
                         text-align: center;
@@ -644,24 +652,34 @@ export function setupRukassaWebhook(app: express.Express, rukassaPayment: Rukass
                         width: 400px;
                     }
                     .back-icon {
-                        color: #2196F3;
-                        font-size: 48px;
+                        font-size: 64px;
                         margin-bottom: 1rem;
                     }
-                    h1 { color: #2196F3; margin: 0.5rem 0; }
-                    p { color: #666; line-height: 1.5; }
+                    h1 {
+                        color: #2196F3;
+                        margin: 0.5rem 0;
+                        font-size: 24px;
+                    }
+                    p {
+                        color: #666;
+                        line-height: 1.5;
+                        margin: 1rem 0;
+                    }
                     .telegram-button {
                         display: inline-block;
                         background-color: #0088cc;
                         color: white;
-                        padding: 10px 20px;
-                        border-radius: 5px;
+                        padding: 12px 24px;
+                        border-radius: 8px;
                         text-decoration: none;
                         margin-top: 1rem;
-                        transition: background-color 0.3s;
+                        transition: all 0.3s ease;
+                        font-weight: bold;
                     }
                     .telegram-button:hover {
                         background-color: #006699;
+                        transform: translateY(-2px);
+                        box-shadow: 0 4px 12px rgba(0,136,204,0.3);
                     }
                 </style>
             </head>
@@ -679,7 +697,6 @@ export function setupRukassaWebhook(app: express.Express, rukassaPayment: Rukass
         `);
     });
 
-    // Проверка здоровья системы
     app.get('/health', (req, res) => {
         res.json({
             status: 'ok',
