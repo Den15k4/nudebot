@@ -13,7 +13,45 @@ dotenv.config();
 // Проверка переменных окружения
 const BOT_TOKEN = process.env.BOT_TOKEN || '7543266158:AAETR2eLuk2joRxh6w2IvPePUw2LZa8_56U';
 const CLOTHOFF_API_KEY = process.env.CLOTHOFF_API_KEY || '4293b3bc213bba6a74011fba8d4ad9bd460599d9';
-const WEBHOOK_URL = process.env.WEBHOOK_URL || 'https://nudebot-production.up.railway.app/webhook';
+const BASE_WEBHOOK_URL = process.env.WEBHOOK_URL || 'https://nudebot-production.up.railway.app';
+const CLOTHOFF_WEBHOOK_URL = `${BASE_WEBHOOK_URL}/webhook`;
+const PORT = parseInt(process.env.PORT || '8080', 10);
+
+// Клавиатуры
+const mainKeyboard = {
+    inline_keyboard: [
+        [
+            { text: '💫 Начать обработку', callback_data: 'start_processing' },
+            { text: '💳 Купить кредиты', callback_data: 'buy_credits' }
+        ],
+        [
+            { text: '💰 Баланс', callback_data: 'check_balance' },
+            { text: '👥 Реферальная программа', callback_data: 'referral_program' }
+        ]
+    ]
+};
+
+const cancelKeyboard = {
+    inline_keyboard: [
+        [{ text: '❌ Отмена', callback_data: 'back_to_menu' }]
+    ]
+};import { Telegraf } from 'telegraf';
+import { message } from 'telegraf/filters';
+import axios from 'axios';
+import { Pool } from 'pg';
+import dotenv from 'dotenv';
+import FormData from 'form-data';
+import express from 'express';
+import multer from 'multer';
+import { RukassaPayment, setupPaymentCommands, setupRukassaWebhook } from './rukassa';
+
+dotenv.config();
+
+// Проверка переменных окружения
+const BOT_TOKEN = process.env.BOT_TOKEN || '7543266158:AAETR2eLuk2joRxh6w2IvPePUw2LZa8_56U';
+const CLOTHOFF_API_KEY = process.env.CLOTHOFF_API_KEY || '4293b3bc213bba6a74011fba8d4ad9bd460599d9';
+const BASE_WEBHOOK_URL = process.env.WEBHOOK_URL || 'https://nudebot-production.up.railway.app';
+const CLOTHOFF_WEBHOOK_URL = `${BASE_WEBHOOK_URL}/webhook`;
 const PORT = parseInt(process.env.PORT || '8080', 10);
 
 // Клавиатуры
@@ -102,13 +140,15 @@ app.use((req, res, next) => {
     console.log('Входящий запрос:', {
         method: req.method,
         path: req.path,
-        headers: req.headers
+        headers: req.headers,
+        query: req.query,
+        timestamp: new Date().toISOString()
     });
     next();
 });
 
 app.use(express.json());
-
+app.use(express.urlencoded({ extended: true }));
 // Инициализация БД
 async function initDB() {
     const client = await pool.connect();
@@ -281,9 +321,17 @@ async function processImage(imageBuffer: Buffer, userId: number): Promise<Proces
         contentType: 'image/jpeg'
     });
     formData.append('id_gen', id_gen);
-    formData.append('webhook', WEBHOOK_URL);
+    formData.append('webhook', CLOTHOFF_WEBHOOK_URL);
 
     try {
+        console.log('Отправка запроса в API с полями:', {
+            cloth: 'naked',
+            id_gen,
+            webhook: CLOTHOFF_WEBHOOK_URL,
+            hasImage: !!imageBuffer,
+            timestamp: new Date().toISOString()
+        });
+
         const response = await apiClient.post('/undress', formData, {
             headers: {
                 ...formData.getHeaders(),
@@ -292,6 +340,8 @@ async function processImage(imageBuffer: Buffer, userId: number): Promise<Proces
             maxBodyLength: Infinity,
             timeout: 120000
         });
+        
+        console.log('Ответ API:', response.data);
         
         const apiResponse: ApiResponse = response.data;
         
@@ -315,6 +365,7 @@ async function processImage(imageBuffer: Buffer, userId: number): Promise<Proces
         };
     } catch (error) {
         if (axios.isAxiosError(error) && error.response?.data) {
+            console.error('API Error Response:', error.response.data);
             if (error.response.data.error === 'Insufficient balance') {
                 throw new Error('INSUFFICIENT_BALANCE');
             }
@@ -323,6 +374,7 @@ async function processImage(imageBuffer: Buffer, userId: number): Promise<Proces
         throw error;
     }
 }
+
 
 // Команды бота
 bot.command('start', async (ctx) => {
@@ -617,9 +669,12 @@ bot.on(message('photo'), async (ctx) => {
     });
     
     // Webhook обработчик
-    app.post('/webhook', upload.any(), async (req, res) => {
+    app.post(['/', '/webhook'], upload.any(), async (req, res) => {
         try {
-            console.log('Получен webhook запрос');
+            console.log('Получен webhook от ClothOff:', {
+                path: req.path,
+                timestamp: new Date().toISOString()
+            });
             console.log('Headers:', req.headers);
             console.log('Body:', req.body);
             console.log('Files:', req.files);
@@ -647,11 +702,7 @@ bot.on(message('photo'), async (ctx) => {
                     }
     
                     try {
-                        await bot.telegram.sendMessage(
-                            userId,
-                            errorMessage,
-                            { reply_markup: mainKeyboard }
-                        );
+                        await bot.telegram.sendMessage(userId, errorMessage, { reply_markup: mainKeyboard });
                         await returnCredit(userId);
                         await bot.telegram.sendMessage(
                             userId,
@@ -725,6 +776,7 @@ bot.on(message('photo'), async (ctx) => {
         }
     });
     
+    
     // Health check
     app.get('/health', (req, res) => {
         res.status(200).json({ 
@@ -749,6 +801,8 @@ bot.on(message('photo'), async (ctx) => {
             
             app.listen(PORT, '0.0.0.0', () => {
                 console.log(`Webhook сервер запущен на порту ${PORT}`);
+                console.log(`ClothOff webhook URL: ${CLOTHOFF_WEBHOOK_URL}`);
+                console.log(`Base webhook URL: ${BASE_WEBHOOK_URL}`);
             });
     
             await bot.launch();
@@ -758,6 +812,7 @@ bot.on(message('photo'), async (ctx) => {
             process.exit(1);
         }
     }
+    
     
     // Graceful shutdown
     process.once('SIGINT', () => {

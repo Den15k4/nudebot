@@ -7,8 +7,7 @@ import express from 'express';
 const SHOP_ID = process.env.SHOP_ID || '2660';
 const TOKEN = process.env.TOKEN || '9876a82910927a2c9a43f34cb5ad2de7';
 const RUKASSA_API_URL = 'https://lk.rukassa.pro/api/v1/create';
-const WEBHOOK_URL = process.env.WEBHOOK_URL?.replace('/webhook', '') || 'https://nudebot-production.up.railway.app';
-
+const BASE_WEBHOOK_URL = process.env.WEBHOOK_URL || 'https://nudebot-production.up.railway.app';
 // Курсы валют к рублю
 const CURRENCY_RATES = {
     RUB: 1,
@@ -227,10 +226,10 @@ export class RukassaPayment {
             formData.append('amount', amountInRubles);
             formData.append('method', curr.method);
             formData.append('currency_in', currency);
-            formData.append('webhook_url', `${WEBHOOK_URL}/rukassa/webhook`);
-            formData.append('success_url', `${WEBHOOK_URL}/payment/success`);
-            formData.append('fail_url', `${WEBHOOK_URL}/payment/fail`);
-            formData.append('back_url', `${WEBHOOK_URL}/payment/back`);
+            formData.append('webhook_url', `${BASE_WEBHOOK_URL}/rukassa/webhook`);
+            formData.append('success_url', `${BASE_WEBHOOK_URL}/payment/success`);
+            formData.append('fail_url', `${BASE_WEBHOOK_URL}/payment/fail`);
+            formData.append('back_url', `${BASE_WEBHOOK_URL}/payment/back`);
 
             formData.append('custom_fields', JSON.stringify({
                 user_id: userId,
@@ -445,12 +444,18 @@ export function setupPaymentCommands(bot: Telegraf, pool: Pool): void {
 export function setupRukassaWebhook(app: express.Express, rukassaPayment: RukassaPayment): void {
     app.post('/rukassa/webhook', express.json(), async (req, res) => {
         try {
-            console.log('Получен webhook от Rukassa:');
+            console.log('Получен webhook от Rukassa:', {
+                path: req.path,
+                timestamp: new Date().toISOString()
+            });
             console.log('Headers:', req.headers);
             console.log('Body:', JSON.stringify(req.body, null, 2));
             
             await rukassaPayment.handleWebhook(req.body);
-            console.log('Webhook обработан успешно');
+            console.log('Webhook обработан успешно', {
+                timestamp: new Date().toISOString(),
+                webhookUrl: `${BASE_WEBHOOK_URL}/rukassa/webhook`
+            });
             
             res.json({ status: 'success' });
         } catch (error) {
