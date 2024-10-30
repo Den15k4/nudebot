@@ -93,18 +93,20 @@ app.use(express.json());
 async function initDB() {
     const client = await pool.connect();
     try {
-        // Проверяем существование колонки accepted_rules
-        const columnCheck = await client.query(`
-            SELECT column_name 
-            FROM information_schema.columns 
-            WHERE table_name = 'users' 
-            AND column_name = 'accepted_rules';
+        await client.query('BEGIN');
+
+        // Сначала проверяем существование таблицы
+        const tableExists = await client.query(`
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_name = 'users'
+            );
         `);
 
-        if (columnCheck.rows.length === 0) {
-            // Если таблица не существует, создаем её
+        if (!tableExists.rows[0].exists) {
+            // Если таблицы нет, создаем её с новой структурой
             await client.query(`
-                CREATE TABLE IF NOT EXISTS users (
+                CREATE TABLE users (
                     user_id BIGINT PRIMARY KEY,
                     username TEXT,
                     credits INT DEFAULT 0,
@@ -114,25 +116,37 @@ async function initDB() {
                     accepted_rules BOOLEAN DEFAULT FALSE
                 );
             `);
+            console.log('Создана новая таблица users');
         } else {
-            // Если таблица существует, но нет колонки accepted_rules, добавляем её
-            await client.query(`
-                ALTER TABLE users 
-                ADD COLUMN IF NOT EXISTS accepted_rules BOOLEAN DEFAULT FALSE;
+            // Проверяем существование колонки
+            const columnExists = await client.query(`
+                SELECT EXISTS (
+                    SELECT FROM information_schema.columns 
+                    WHERE table_name = 'users' 
+                    AND column_name = 'accepted_rules'
+                );
             `);
+
+            if (!columnExists.rows[0].exists) {
+                // Добавляем колонку, если её нет
+                await client.query(`
+                    ALTER TABLE users 
+                    ADD COLUMN accepted_rules BOOLEAN DEFAULT FALSE;
+                `);
+                console.log('Добавлена колонка accepted_rules');
+            }
         }
 
-        console.log('База данных инициализирована успешно');
+        await client.query('COMMIT');
+        console.log('База данных успешно инициализирована');
     } catch (error) {
-        if (error instanceof Error) {
-            console.error('Ошибка при инициализации базы данных:', error.message);
-        }
+        await client.query('ROLLBACK');
+        console.error('Ошибка при инициализации базы данных:', error);
         throw error;
     } finally {
         client.release();
     }
 }
-
 // Функция проверки возраста
 async function isAdultContent(): Promise<boolean> {
     try {
@@ -217,26 +231,30 @@ async function hasAcceptedRules(userId: number): Promise<boolean> {
 }
 
 // Middleware для проверки принятия правил
-async function requireAcceptedRules(ctx: any, next: () => Promise<void>) {
-    if (ctx.message?.text === '/start') {
-        return next();
-    }
+async function hasAcceptedRules(userId: number): Promise<boolean> {
+    try {
+        // Сначала проверяем существование колонки
+        const columnExists = await pool.query(`
+            SELECT EXISTS (
+                SELECT FROM information_schema.columns 
+                WHERE table_name = 'users' 
+                AND column_name = 'accepted_rules'
+            );
+        `);
 
-    const userId = ctx.from?.id;
-    if (!userId) {
-        return;
-    }
+        if (!columnExists.rows[0].exists) {
+            return false; // Если колонки нет, считаем что правила не приняты
+        }
 
-    const accepted = await hasAcceptedRules(userId);
-    if (!accepted) {
-        await ctx.reply(
-            '⚠️ Для использования бота необходимо принять правила.\n' +
-            'Используйте команду /start для просмотра правил.'
+        const result = await pool.query(
+            'SELECT accepted_rules FROM users WHERE user_id = $1',
+            [userId]
         );
-        return;
+        return result.rows[0]?.accepted_rules || false;
+    } catch (error) {
+        console.error('Ошибка при проверке принятия правил:', error);
+        return false; // В случае ошибки считаем что правила не приняты
     }
-
-    return next();
 }
 
 // Функции работы с пользователями
@@ -252,7 +270,32 @@ async function checkCredits(userId: number): Promise<number> {
         throw error;
     }
 }
+async function requireAcceptedRules(ctx: any, next: () => Promise<void>) {
+    try {
+        if (ctx.message?.text === '/start') {
+            return next();
+        }
 
+        const userId = ctx.from?.id;
+        if (!userId) {
+            return;
+        }
+
+        const accepted = await hasAcceptedRules(userId);
+        if (!accepted) {
+            await ctx.reply(
+                '⚠️ Для использования бота необходимо принять правила.\n' +
+                'Используйте команду /start для просмотра правил.'
+            );
+            return;
+        }
+
+        return next();
+    } catch (error) {
+        console.error('Ошибка в middleware проверки правил:', error);
+        return next(); // В случае ошибки пропускаем проверку
+    }
+}
 async function useCredit(userId: number): Promise<void> {
     try {
         await pool.query(
@@ -558,28 +601,33 @@ app.post('/webhook', upload.any(), async (req, res) => {
 // Запуск приложения
 async function start() {
     try {
+        // Инициализируем базу данных перед запуском бота
         await initDB();
         console.log('База данных инициализирована');
 
+        // Инициализируем платежную систему
         const rukassaPayment = new RukassaPayment(pool, bot);
         await rukassaPayment.initPaymentsTable();
         console.log('Таблица платежей инициализирована');
 
+        // Настраиваем маршруты и запускаем сервер
         setupPaymentCommands(bot, pool);
         setupRukassaWebhook(app, rukassaPayment);
-        console.log('Платежная система инициализирована');
         
         app.listen(PORT, '0.0.0.0', () => {
             console.log(`Webhook сервер запущен на порту ${PORT}`);
         });
 
+        // Запускаем бота
         await bot.launch();
         console.log('Бот запущен');
     } catch (error) {
         console.error('Ошибка при запуске приложения:', error);
-        process.exit(1);
+        // Добавляем задержку перед выходом, чтобы логи успели записаться
+        setTimeout(() => process.exit(1), 1000);
     }
 }
+
 
 // Graceful shutdown
 process.once('SIGINT', () => {
