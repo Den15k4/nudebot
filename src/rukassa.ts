@@ -225,6 +225,7 @@ export class RukassaPayment {
             formData.append('order_id', merchantOrderId);
             formData.append('amount', amountInRubles);
             formData.append('method', curr.method);
+            formData.append('user_code', userId.toString());
             formData.append('currency_in', currency);
             formData.append('webhook_url', `${BASE_WEBHOOK_URL}/rukassa/webhook`);
             formData.append('success_url', `${BASE_WEBHOOK_URL}/payment/success`);
