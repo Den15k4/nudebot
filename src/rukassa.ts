@@ -189,8 +189,13 @@ export class RukassaPayment {
         const client = await this.pool.connect();
         try {
             await client.query('BEGIN');
+    
+            // Удаляем существующую таблицу
+            await client.query('DROP TABLE IF EXISTS payments CASCADE;');
+    
+            // Создаем таблицу заново
             await client.query(`
-                CREATE TABLE IF NOT EXISTS payments (
+                CREATE TABLE payments (
                     id SERIAL PRIMARY KEY,
                     user_id BIGINT REFERENCES users(user_id),
                     order_id TEXT UNIQUE,
@@ -203,6 +208,13 @@ export class RukassaPayment {
                     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
                 );
             `);
+    
+            // Создаем индексы для оптимизации
+            await client.query(`
+                CREATE INDEX idx_payments_user_id ON payments(user_id);
+                CREATE INDEX idx_payments_merchant_order_id ON payments(merchant_order_id);
+            `);
+    
             await client.query('COMMIT');
             console.log('Таблица payments успешно создана');
         } catch (error) {

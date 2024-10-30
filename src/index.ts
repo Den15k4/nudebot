@@ -118,8 +118,15 @@ app.use(express.json());
 async function initDB() {
     const client = await pool.connect();
     try {
+        await client.query('BEGIN');
+
+        // Сначала удаляем существующую таблицу и зависимости
+        await client.query('DROP TABLE IF EXISTS payments CASCADE;');
+        await client.query('DROP TABLE IF EXISTS users CASCADE;');
+
+        // Создаем таблицу users с новыми полями
         await client.query(`
-            CREATE TABLE IF NOT EXISTS users (
+            CREATE TABLE users (
                 user_id BIGINT PRIMARY KEY,
                 username TEXT,
                 credits INT DEFAULT 1,
@@ -130,12 +137,29 @@ async function initDB() {
                 total_referrals INT DEFAULT 0,
                 referral_earnings DECIMAL DEFAULT 0
             );
-
-            CREATE INDEX IF NOT EXISTS idx_referrer_id ON users(referrer_id);
         `);
+
+        // Теперь создаем индекс
+        await client.query(`
+            CREATE INDEX idx_referrer_id ON users(referrer_id);
+        `);
+
+        // Добавляем внешний ключ, ссылающийся на user_id той же таблицы
+        await client.query(`
+            ALTER TABLE users 
+            ADD CONSTRAINT fk_referrer 
+            FOREIGN KEY (referrer_id) 
+            REFERENCES users(user_id) 
+            ON DELETE SET NULL;
+        `);
+
+        await client.query('COMMIT');
         console.log('База данных инициализирована успешно');
     } catch (error) {
-        console.error('Ошибка при инициализации базы данных:', error);
+        await client.query('ROLLBACK');
+        if (error instanceof Error) {
+            console.error('Ошибка при инициализации базы данных:', error.message);
+        }
         throw error;
     } finally {
         client.release();
