@@ -706,7 +706,7 @@ export function setupRukassaWebhook(app: express.Express, rukassaPayment: Rukass
         res.json({
             status: 'ok',
             timestamp: new Date().toISOString(),
-            webhook_url: `${WEBHOOK_URL}/rukassa/webhook`
+            webhook_url: `${BASE_WEBHOOK_URL}/rukassa/webhook`
         });
     });
 }
