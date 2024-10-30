@@ -93,17 +93,35 @@ app.use(express.json());
 async function initDB() {
     const client = await pool.connect();
     try {
-        await client.query(`
-            CREATE TABLE IF NOT EXISTS users (
-                user_id BIGINT PRIMARY KEY,
-                username TEXT,
-                credits INT DEFAULT 0,
-                created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-                last_used TIMESTAMPTZ,
-                pending_task_id TEXT,
-                accepted_rules BOOLEAN DEFAULT FALSE
-            );
+        // Проверяем существование колонки accepted_rules
+        const columnCheck = await client.query(`
+            SELECT column_name 
+            FROM information_schema.columns 
+            WHERE table_name = 'users' 
+            AND column_name = 'accepted_rules';
         `);
+
+        if (columnCheck.rows.length === 0) {
+            // Если таблица не существует, создаем её
+            await client.query(`
+                CREATE TABLE IF NOT EXISTS users (
+                    user_id BIGINT PRIMARY KEY,
+                    username TEXT,
+                    credits INT DEFAULT 0,
+                    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                    last_used TIMESTAMPTZ,
+                    pending_task_id TEXT,
+                    accepted_rules BOOLEAN DEFAULT FALSE
+                );
+            `);
+        } else {
+            // Если таблица существует, но нет колонки accepted_rules, добавляем её
+            await client.query(`
+                ALTER TABLE users 
+                ADD COLUMN IF NOT EXISTS accepted_rules BOOLEAN DEFAULT FALSE;
+            `);
+        }
+
         console.log('База данных инициализирована успешно');
     } catch (error) {
         if (error instanceof Error) {
