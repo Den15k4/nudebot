@@ -359,6 +359,10 @@ bot.command('start', async (ctx) => {
 // Обработчики callback-кнопок
 bot.action('start_processing', async (ctx) => {
     try {
+        if (!ctx.from) {
+            await ctx.answerCbQuery('Ошибка: пользователь не найден');
+            return;
+        }
         const userId = ctx.from.id;
         const credits = await checkCredits(userId);
 
@@ -396,6 +400,10 @@ bot.action('start_processing', async (ctx) => {
 
 bot.action('check_balance', async (ctx) => {
     try {
+        if (!ctx.from) {
+            await ctx.answerCbQuery('Ошибка: пользователь не найден');
+            return;
+        }
         const userId = ctx.from.id;
         const user = await getUser(userId);
         
@@ -445,6 +453,10 @@ bot.action('buy_credits', async (ctx) => {
 
 bot.action('referral_program', async (ctx) => {
     try {
+        if (!ctx.from) {
+            await ctx.answerCbQuery('Ошибка: пользователь не найден');
+            return;
+        }
         const userId = ctx.from.id;
         const user = await getUser(userId);
         const referralLink = await createReferralLink(userId);
