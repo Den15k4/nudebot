@@ -1,4 +1,4 @@
-import { Telegraf, Markup } from 'telegraf';
+import { Telegraf } from 'telegraf';
 import axios from 'axios';
 import { Pool } from 'pg';
 import express from 'express';
@@ -83,34 +83,34 @@ const SUPPORTED_CURRENCIES: Currency[] = [
         symbol: '₸', 
         name: 'Visa/MC (KZT)', 
         method: 'card_kzt',
-        minAmount: 32500  // ~300₽
+        minAmount: 32500
     },
     { 
         code: 'UZS', 
         symbol: 'сум', 
         name: 'Visa/MC (UZS)', 
         method: 'card_uzs',
-        minAmount: 86000  // ~650₽
+        minAmount: 86000
     },
     { 
         code: 'CRYPTO', 
         symbol: 'USDT', 
         name: 'Криптовалюта', 
         method: 'crypto',
-        minAmount: 3      // ~300₽
+        minAmount: 3
     }
 ];
 
-// Пакеты с ценами в местных валютах
+// Пакеты с ценами
 const CREDIT_PACKAGES: PaymentPackage[] = [
     {
         id: 1,
         credits: 3,
         prices: {
-            RUB: 300,     // 300₽
-            KZT: 32500,   // ~300₽
-            UZS: 86000,   // ~650₽
-            CRYPTO: 3.00  // ~300₽
+            RUB: 300,
+            KZT: 32500,
+            UZS: 86000,
+            CRYPTO: 3.00
         },
         description: '3 генерации'
     },
@@ -118,10 +118,10 @@ const CREDIT_PACKAGES: PaymentPackage[] = [
         id: 2,
         credits: 7,
         prices: {
-            RUB: 600,      // 600₽
-            KZT: 58500,    // ~600₽
-            UZS: 154800,   // ~1200₽
-            CRYPTO: 6.00   // ~600₽
+            RUB: 600,
+            KZT: 58500,
+            UZS: 154800,
+            CRYPTO: 6.00
         },
         description: '7 генераций'
     },
@@ -129,10 +129,10 @@ const CREDIT_PACKAGES: PaymentPackage[] = [
         id: 3,
         credits: 15,
         prices: {
-            RUB: 1200,     // 1200₽
-            KZT: 108000,   // ~1200₽
-            UZS: 286000,   // ~2150₽
-            CRYPTO: 12.00  // ~1200₽
+            RUB: 1200,
+            KZT: 108000,
+            UZS: 286000,
+            CRYPTO: 12.00
         },
         description: '15 генераций'
     },
@@ -140,14 +140,41 @@ const CREDIT_PACKAGES: PaymentPackage[] = [
         id: 4,
         credits: 30,
         prices: {
-            RUB: 2000,     // 2000₽
-            KZT: 195000,   // ~2000₽
-            UZS: 516000,   // ~3900₽
-            CRYPTO: 20.00  // ~2000₽
+            RUB: 2000,
+            KZT: 195000,
+            UZS: 516000,
+            CRYPTO: 20.00
         },
         description: '30 генераций'
     }
 ];
+
+// Клавиатуры
+const currencyKeyboard = {
+    inline_keyboard: [
+        [{ text: '💳 Visa/MC (RUB)', callback_data: 'currency_RUB' }],
+        [{ text: '💳 Visa/MC (KZT)', callback_data: 'currency_KZT' }],
+        [{ text: '💳 Visa/MC (UZS)', callback_data: 'currency_UZS' }],
+        [{ text: '💎 Криптовалюта', callback_data: 'currency_CRYPTO' }]
+    ]
+};
+
+const createPackagesKeyboard = (currency: SupportedCurrency, curr: Currency) => ({
+    inline_keyboard: [
+        ...CREDIT_PACKAGES.map(pkg => [{
+            text: `${pkg.description} - ${pkg.prices[currency]} ${curr.symbol}`,
+            callback_data: `buy_${pkg.id}_${currency}`
+        }]),
+        [{ text: '↩️ Назад к способам оплаты', callback_data: 'show_payment_methods' }]
+    ]
+});
+
+const createPaymentKeyboard = (paymentUrl: string, currency: SupportedCurrency) => ({
+    inline_keyboard: [
+        [{ text: '💳 Перейти к оплате', url: paymentUrl }],
+        [{ text: '↩️ Назад к выбору пакета', callback_data: `currency_${currency}` }]
+    ]
+});
 
 export class RukassaPayment {
     private pool: Pool;
@@ -237,14 +264,6 @@ export class RukassaPayment {
                 description: `${package_.description} для пользователя ${userId}`
             }));
 
-            console.log('Параметры запроса:', {
-                url: RUKASSA_API_URL,
-                data: { 
-                    ...Object.fromEntries(formData),
-                    token: '***hidden***'
-                }
-            });
-
             const response = await axios.post<RukassaCreatePaymentResponse>(
                 RUKASSA_API_URL,
                 formData,
@@ -256,8 +275,6 @@ export class RukassaPayment {
                     timeout: 10000
                 }
             );
-
-            console.log('Ответ Rukassa:', response.data);
 
             if (response.data.error) {
                 throw new Error(response.data.message || response.data.error);
@@ -271,8 +288,6 @@ export class RukassaPayment {
             return paymentUrl;
 
         } catch (error) {
-            console.error('Ошибка при создании платежа:', error);
-            
             await this.pool.query(
                 'DELETE FROM payments WHERE merchant_order_id = $1',
                 [merchantOrderId]
@@ -313,7 +328,6 @@ export class RukassaPayment {
                 const amountInRub = parseFloat(data.amount);
                 if (!isNaN(amountInRub)) {
                     try {
-                        // Импортируем функцию обработки реферальных платежей
                         const referralHandler = await import('./index');
                         await referralHandler.processReferralPayment(user_id, amountInRub);
                     } catch (error) {
@@ -347,20 +361,12 @@ export class RukassaPayment {
 }
 
 export function setupPaymentCommands(bot: Telegraf, pool: Pool): void {
-    // Обработчик команды покупки кредитов
     bot.hears('💳 Купить кредиты', async (ctx) => {
-        const keyboard = Markup.inlineKeyboard([
-            [Markup.button.callback('💳 Visa/MC (RUB)', 'currency_RUB')],
-            [Markup.button.callback('💳 Visa/MC (KZT)', 'currency_KZT')],
-            [Markup.button.callback('💳 Visa/MC (UZS)', 'currency_UZS')],
-            [Markup.button.callback('💎 Криптовалюта', 'currency_CRYPTO')]
-        ]);
-
         await ctx.replyWithPhoto(
             { source: './assets/payment.jpg' },
             {
                 caption: '💳 Выберите способ оплаты:',
-                reply_markup: keyboard
+                reply_markup: currencyKeyboard
             }
         );
     });
@@ -375,21 +381,13 @@ export function setupPaymentCommands(bot: Telegraf, pool: Pool): void {
                 return;
             }
 
-            const keyboard = Markup.inlineKeyboard([
-                ...CREDIT_PACKAGES.map(pkg => [
-                    Markup.button.callback(
-                        `${pkg.description} - ${pkg.prices[currency]} ${curr.symbol}`,
-                        `buy_${pkg.id}_${currency}`
-                    )
-                ]),
-                [Markup.button.callback('↩️ Назад к способам оплаты', 'show_payment_methods')]
-            ]);
-
             await ctx.answerCbQuery();
             await ctx.editMessageCaption(
                 `💫 Выберите пакет кредитов (${curr.name}):\n\n` +
                 `ℹ️ Чем больше пакет, тем выгоднее цена за кредит!`,
-                { reply_markup: keyboard }
+                {
+                    reply_markup: createPackagesKeyboard(currency, curr)
+                }
             );
         } catch (error) {
             console.error('Ошибка при выборе валюты:', error);
@@ -416,11 +414,6 @@ export function setupPaymentCommands(bot: Telegraf, pool: Pool): void {
             const package_ = CREDIT_PACKAGES.find(p => p.id === packageId);
             const curr = SUPPORTED_CURRENCIES.find(c => c.code === currency);
 
-            const keyboard = Markup.inlineKeyboard([
-                [Markup.button.url('💳 Перейти к оплате', paymentUrl)],
-                [Markup.button.callback('↩️ Назад к выбору пакета', `currency_${currency}`)]
-            ]);
-
             await ctx.editMessageMedia(
                 {
                     type: 'photo',
@@ -431,26 +424,17 @@ export function setupPaymentCommands(bot: Telegraf, pool: Pool): void {
                             '✅ Нажмите кнопку ниже для перехода к оплате.\n' +
                             '⚡️ После оплаты кредиты будут начислены автоматически!'
                 },
-                { reply_markup: keyboard }
+                {
+                    reply_markup: createPaymentKeyboard(paymentUrl, currency)
+                }
             );
         } catch (error) {
             console.error('Ошибка при создании платежа:', error);
-            await ctx.reply(
-                '❌ Произошла ошибка при создании платежа.\n' +
-                'Пожалуйста, попробуйте позже или выберите другой способ оплаты.'
-            );
+            await ctx.reply('❌ Произошла ошибка при создании платежа. Попробуйте позже.');
         }
     });
 
-    // Обработчик кнопки "Назад к способам оплаты"
     bot.action('show_payment_methods', async (ctx) => {
-        const keyboard = Markup.inlineKeyboard([
-            [Markup.button.callback('💳 Visa/MC (RUB)', 'currency_RUB')],
-            [Markup.button.callback('💳 Visa/MC (KZT)', 'currency_KZT')],
-            [Markup.button.callback('💳 Visa/MC (UZS)', 'currency_UZS')],
-            [Markup.button.callback('💎 Криптовалюта', 'currency_CRYPTO')]
-        ]);
-
         try {
             await ctx.editMessageMedia(
                 {
@@ -458,7 +442,9 @@ export function setupPaymentCommands(bot: Telegraf, pool: Pool): void {
                     media: { source: './assets/payment.jpg' },
                     caption: '💳 Выберите способ оплаты:'
                 },
-                { reply_markup: keyboard }
+                {
+                    reply_markup: currencyKeyboard
+                }
             );
         } catch (error) {
             console.error('Ошибка при возврате к способам оплаты:', error);
@@ -487,6 +473,7 @@ export function setupRukassaWebhook(app: express.Express, rukassaPayment: Rukass
         }
     });
 
+    // Страница успешной оплаты
     app.get('/payment/success', (req, res) => {
         res.send(`
             <!DOCTYPE html>
@@ -551,6 +538,7 @@ export function setupRukassaWebhook(app: express.Express, rukassaPayment: Rukass
         `);
     });
 
+    // Страница неудачной оплаты
     app.get('/payment/fail', (req, res) => {
         res.send(`
             <!DOCTYPE html>
@@ -615,6 +603,7 @@ export function setupRukassaWebhook(app: express.Express, rukassaPayment: Rukass
         `);
     });
 
+    // Страница отмены оплаты
     app.get('/payment/back', (req, res) => {
         res.send(`
             <!DOCTYPE html>
@@ -678,7 +667,7 @@ export function setupRukassaWebhook(app: express.Express, rukassaPayment: Rukass
         `);
     });
 
-    // Эндпоинт для проверки здоровья системы
+    // Проверка здоровья системы
     app.get('/health', (req, res) => {
         res.json({
             status: 'ok',

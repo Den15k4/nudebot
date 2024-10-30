@@ -1,4 +1,4 @@
-import { Telegraf, Markup } from 'telegraf';
+import { Telegraf } from 'telegraf';
 import { message } from 'telegraf/filters';
 import axios from 'axios';
 import { Pool } from 'pg';
@@ -15,6 +15,37 @@ const BOT_TOKEN = process.env.BOT_TOKEN || '7543266158:AAETR2eLuk2joRxh6w2IvPePU
 const CLOTHOFF_API_KEY = process.env.CLOTHOFF_API_KEY || '4293b3bc213bba6a74011fba8d4ad9bd460599d9';
 const WEBHOOK_URL = process.env.WEBHOOK_URL || 'https://nudebot-production.up.railway.app/webhook';
 const PORT = parseInt(process.env.PORT || '8080', 10);
+
+// Клавиатуры
+const mainMenu = {
+    keyboard: [
+        ['💫 Начать обработку', '💳 Купить кредиты'],
+        ['💰 Баланс', '👥 Реферальная программа']
+    ],
+    resize_keyboard: true
+};
+
+const buyMenu = {
+    keyboard: [
+        ['💳 Купить кредиты'],
+        ['💰 Баланс', '👥 Реферальная программа']
+    ],
+    resize_keyboard: true
+};
+
+const processingMenu = {
+    keyboard: [
+        ['❌ Отмена'],
+        ['💰 Баланс', '👥 Реферальная программа']
+    ],
+    resize_keyboard: true
+};
+
+const referralKeyboard = {
+    inline_keyboard: [
+        [{ text: '♻️ Обновить статистику', callback_data: 'refresh_referrals' }]
+    ]
+};
 
 // Интерфейсы
 interface ApiResponse {
@@ -45,7 +76,7 @@ interface WebhookBody {
     error?: string;
 }
 
-// Инициализация базы данных
+// Инициализация базы данных и бота
 const pool = new Pool({
     connectionString: process.env.DATABASE_URL,
     ssl: {
@@ -53,10 +84,8 @@ const pool = new Pool({
     }
 });
 
-// Инициализация бота
 const bot = new Telegraf(BOT_TOKEN);
 
-// Инициализация API клиента
 const apiClient = axios.create({
     baseURL: 'https://public-api.clothoff.net',
     headers: {
@@ -65,18 +94,15 @@ const apiClient = axios.create({
     }
 });
 
-// Express сервер для вебхуков
+// Express сервер
 const app = express();
-
-// Настройка multer для обработки multipart/form-data
 const upload = multer({
     storage: multer.memoryStorage(),
     limits: {
-        fileSize: 10 * 1024 * 1024 // 10MB лимит
+        fileSize: 10 * 1024 * 1024
     }
 });
 
-// Middleware для логирования всех запросов
 app.use((req, res, next) => {
     console.log('Входящий запрос:', {
         method: req.method,
@@ -88,7 +114,7 @@ app.use((req, res, next) => {
 
 app.use(express.json());
 
-// Создание таблиц в базе данных
+// База данных
 async function initDB() {
     const client = await pool.connect();
     try {
@@ -109,16 +135,14 @@ async function initDB() {
         `);
         console.log('База данных инициализирована успешно');
     } catch (error) {
-        if (error instanceof Error) {
-            console.error('Ошибка при инициализации базы данных:', error.message);
-        }
+        console.error('Ошибка при инициализации базы данных:', error);
         throw error;
     } finally {
         client.release();
     }
 }
 
-// Функции для реферальной системы
+// Функции реферальной системы
 async function createReferralLink(userId: number): Promise<string> {
     const botInfo = await bot.telegram.getMe();
     return `https://t.me/${botInfo.username}?start=ref${userId}`;
@@ -129,26 +153,22 @@ async function processReferral(userId: number, referrerId: number): Promise<void
     try {
         await client.query('BEGIN');
         
-        // Проверяем, не является ли пользователь уже чьим-то рефералом
         const existingUser = await client.query(
             'SELECT referrer_id FROM users WHERE user_id = $1',
             [userId]
         );
         
         if (!existingUser.rows[0].referrer_id) {
-            // Обновляем информацию о реферале
             await client.query(
                 'UPDATE users SET referrer_id = $1 WHERE user_id = $2',
                 [referrerId, userId]
             );
             
-            // Увеличиваем счетчик рефералов
             await client.query(
                 'UPDATE users SET total_referrals = total_referrals + 1 WHERE user_id = $1',
                 [referrerId]
             );
 
-            // Отправляем уведомление рефереру
             await bot.telegram.sendMessage(
                 referrerId,
                 '🎉 У вас новый реферал! Вы будете получать 50% от суммы его платежей.'
@@ -170,7 +190,6 @@ export async function processReferralPayment(userId: number, paymentAmount: numb
     try {
         await client.query('BEGIN');
         
-        // Получаем информацию о реферере
         const referrerResult = await client.query(
             'SELECT referrer_id FROM users WHERE user_id = $1',
             [userId]
@@ -178,15 +197,13 @@ export async function processReferralPayment(userId: number, paymentAmount: numb
         
         if (referrerResult.rows[0]?.referrer_id) {
             const referrerId = referrerResult.rows[0].referrer_id;
-            const referralBonus = paymentAmount * 0.5; // 50% от платежа
+            const referralBonus = paymentAmount * 0.5;
             
-            // Начисляем бонус рефереру
             await client.query(
                 'UPDATE users SET referral_earnings = referral_earnings + $1 WHERE user_id = $2',
                 [referralBonus, referrerId]
             );
             
-            // Отправляем уведомление рефереру
             await bot.telegram.sendMessage(
                 referrerId,
                 `🎁 Вы получили реферальный бонус ${referralBonus.toFixed(2)} RUB от оплаты вашего реферала!`
@@ -203,17 +220,11 @@ export async function processReferralPayment(userId: number, paymentAmount: numb
     }
 }
 
-// Функция проверки возраста
+// Базовые функции
 async function isAdultContent(): Promise<boolean> {
-    try {
-        return true;
-    } catch (error) {
-        console.error('Ошибка при проверке содержимого:', error);
-        return false;
-    }
+    return true;
 }
 
-// Обработка изображения через API
 async function processImage(imageBuffer: Buffer, userId: number): Promise<ProcessingResult> {
     const formData = new FormData();
     const id_gen = `user_${userId}_${Date.now()}`;
@@ -227,13 +238,6 @@ async function processImage(imageBuffer: Buffer, userId: number): Promise<Proces
     formData.append('webhook', WEBHOOK_URL);
 
     try {
-        console.log('Отправка запроса в API с полями:', {
-            cloth: 'naked',
-            id_gen,
-            webhook: WEBHOOK_URL,
-            hasImage: !!imageBuffer
-        });
-
         const response = await apiClient.post('/undress', formData, {
             headers: {
                 ...formData.getHeaders(),
@@ -242,8 +246,6 @@ async function processImage(imageBuffer: Buffer, userId: number): Promise<Proces
             maxBodyLength: Infinity,
             timeout: 120000
         });
-        
-        console.log('Ответ API:', response.data);
         
         const apiResponse: ApiResponse = response.data;
         
@@ -267,7 +269,6 @@ async function processImage(imageBuffer: Buffer, userId: number): Promise<Proces
         };
     } catch (error) {
         if (axios.isAxiosError(error) && error.response?.data) {
-            console.error('API Error Response:', error.response.data);
             if (error.response.data.error === 'Insufficient balance') {
                 throw new Error('INSUFFICIENT_BALANCE');
             }
@@ -277,64 +278,43 @@ async function processImage(imageBuffer: Buffer, userId: number): Promise<Proces
     }
 }
 
-// Функции работы с пользователями
+// Функции пользователей
 async function checkCredits(userId: number): Promise<number> {
-    try {
-        const result = await pool.query(
-            'SELECT credits FROM users WHERE user_id = $1',
-            [userId]
-        );
-        return result.rows[0]?.credits || 0;
-    } catch (error) {
-        console.error('Ошибка при проверке кредитов:', error);
-        throw error;
-    }
+    const result = await pool.query(
+        'SELECT credits FROM users WHERE user_id = $1',
+        [userId]
+    );
+    return result.rows[0]?.credits || 0;
 }
 
 async function useCredit(userId: number): Promise<void> {
-    try {
-        await pool.query(
-            'UPDATE users SET credits = credits - 1, last_used = CURRENT_TIMESTAMP WHERE user_id = $1',
-            [userId]
-        );
-    } catch (error) {
-        console.error('Ошибка при использовании кредита:', error);
-        throw error;
-    }
+    await pool.query(
+        'UPDATE users SET credits = credits - 1, last_used = CURRENT_TIMESTAMP WHERE user_id = $1',
+        [userId]
+    );
 }
 
 async function returnCredit(userId: number): Promise<void> {
-    try {
-        await pool.query(
-            'UPDATE users SET credits = credits + 1 WHERE user_id = $1',
-            [userId]
-        );
-    } catch (error) {
-        console.error('Ошибка при возврате кредита:', error);
-        throw error;
-    }
+    await pool.query(
+        'UPDATE users SET credits = credits + 1 WHERE user_id = $1',
+        [userId]
+    );
 }
 
 async function addNewUser(userId: number, username: string | undefined): Promise<void> {
-    try {
-        await pool.query(
-            'INSERT INTO users (user_id, username, credits) VALUES ($1, $2, 1) ON CONFLICT (user_id) DO NOTHING',
-            [userId, username || 'anonymous']
-        );
-    } catch (error) {
-        console.error('Ошибка при добавлении пользователя:', error);
-        throw error;
-    }
+    await pool.query(
+        'INSERT INTO users (user_id, username, credits) VALUES ($1, $2, 1) ON CONFLICT (user_id) DO NOTHING',
+        [userId, username || 'anonymous']
+    );
 }
 
-// Обработчики команд бота
+// Команды бота
 bot.command('start', async (ctx) => {
     try {
         const userId = ctx.from.id;
         const username = ctx.from.username;
         const args = ctx.message.text.split(' ');
         
-        // Проверяем реферальный код
         if (args[1] && args[1].startsWith('ref')) {
             const referrerId = parseInt(args[1].substring(3));
             if (referrerId && referrerId !== userId) {
@@ -343,11 +323,6 @@ bot.command('start', async (ctx) => {
         }
 
         await addNewUser(userId, username);
-        
-        const mainMenu = Markup.keyboard([
-            ['💫 Начать обработку', '💳 Купить кредиты'],
-            ['💰 Баланс', '👥 Реферальная программа']
-        ]).resize();
         
         await ctx.replyWithPhoto(
             { source: './assets/welcome.jpg' },
@@ -365,7 +340,7 @@ bot.command('start', async (ctx) => {
     }
 });
 
-// Обработчик кнопки "Начать обработку"
+// Обработчики кнопок
 bot.hears('💫 Начать обработку', async (ctx) => {
     try {
         const userId = ctx.from.id;
@@ -375,10 +350,7 @@ bot.hears('💫 Начать обработку', async (ctx) => {
             return ctx.reply(
                 '❌ У вас закончились кредиты\n\n' +
                 'Используйте команду 💳 Купить кредиты для пополнения баланса.',
-                Markup.keyboard([
-                    ['💳 Купить кредиты'],
-                    ['💰 Баланс', '👥 Реферальная программа']
-                ]).resize()
+                { reply_markup: buyMenu }
             );
         }
 
@@ -388,10 +360,7 @@ bot.hears('💫 Начать обработку', async (ctx) => {
             '1. Изображение должно содержать только людей старше 18 лет\n' +
             '2. Убедитесь, что на фото чётко видно лицо\n' +
             '3. Изображение должно быть хорошего качества',
-            Markup.keyboard([
-                ['❌ Отмена'],
-                ['💰 Баланс', '👥 Реферальная программа']
-            ]).resize()
+            { reply_markup: processingMenu }
         );
     } catch (error) {
         console.error('Ошибка при начале обработки:', error);
@@ -399,12 +368,10 @@ bot.hears('💫 Начать обработку', async (ctx) => {
     }
 });
 
-// Обработчик кнопки "Реферальная программа"
 bot.hears('👥 Реферальная программа', async (ctx) => {
     try {
         const userId = ctx.from.id;
         
-        // Получаем статистику рефералов
         const stats = await pool.query(
             'SELECT total_referrals, referral_earnings FROM users WHERE user_id = $1',
             [userId]
@@ -422,9 +389,7 @@ bot.hears('👥 Реферальная программа', async (ctx) => {
                         `👥 Рефералов: ${stats.rows[0].total_referrals}\n` +
                         `💰 Заработано: ${stats.rows[0].referral_earnings.toFixed(2)} RUB\n\n` +
                         `🔗 Ваша реферальная ссылка:\n${referralLink}`,
-                reply_markup: Markup.inlineKeyboard([
-                    [Markup.button.callback('♻️ Обновить статистику', 'refresh_referrals')]
-                ])
+                reply_markup: referralKeyboard
             }
         );
     } catch (error) {
@@ -433,7 +398,6 @@ bot.hears('👥 Реферальная программа', async (ctx) => {
     }
 });
 
-// Обработчик обновления статистики рефералов
 bot.action('refresh_referrals', async (ctx) => {
     try {
         const userId = ctx.from?.id;
@@ -458,11 +422,7 @@ bot.action('refresh_referrals', async (ctx) => {
             `👥 Рефералов: ${stats.rows[0].total_referrals}\n` +
             `💰 Заработано: ${stats.rows[0].referral_earnings.toFixed(2)} RUB\n\n` +
             `🔗 Ваша реферальная ссылка:\n${referralLink}`,
-            {
-                reply_markup: Markup.inlineKeyboard([
-                    [Markup.button.callback('♻️ Обновить статистику', 'refresh_referrals')]
-                ])
-            }
+            { reply_markup: referralKeyboard }
         );
     } catch (error) {
         console.error('Ошибка при обновлении статистики:', error);
@@ -470,17 +430,11 @@ bot.action('refresh_referrals', async (ctx) => {
     }
 });
 
-// Обработчик кнопки "Отмена"
 bot.hears('❌ Отмена', async (ctx) => {
-    const mainMenu = Markup.keyboard([
-        ['💫 Начать обработку', '💳 Купить кредиты'],
-        ['💰 Баланс', '👥 Реферальная программа']
-    ]).resize();
-    
-    await ctx.reply('Операция отменена. Выберите действие:', mainMenu);
+    await ctx.reply('Операция отменена. Выберите действие:', { reply_markup: mainMenu });
 });
 
-// Обработчик фотографий
+// Обработка фотографий
 bot.on(message('photo'), async (ctx) => {
     const userId = ctx.from.id;
     let processingMsg;
@@ -492,16 +446,14 @@ bot.on(message('photo'), async (ctx) => {
             return ctx.reply(
                 '❌ У вас закончились кредиты\n\n' +
                 'Используйте команду 💳 Купить кредиты для пополнения баланса.',
-                Markup.keyboard([
-                    ['💳 Купить кредиты'],
-                    ['💰 Баланс', '👥 Реферальная программа']
-                ]).resize()
+                { reply_markup: buyMenu }
             );
         }
 
         processingMsg = await ctx.reply(
             '⏳ Начинаю обработку изображения...\n' +
-            'Пожалуйста, подождите.'
+            'Пожалуйста, подождите.',
+            { reply_markup: mainMenu }
         );
 
         const photo = ctx.message.photo[ctx.message.photo.length - 1];
@@ -533,10 +485,7 @@ bot.on(message('photo'), async (ctx) => {
                 `📊 Позиция в очереди: ${result.queueNum}\n` +
                 `🔄 ID задачи: ${result.idGen}\n\n` +
                 '🔍 Результат будет отправлен, когда обработка завершится.',
-                Markup.keyboard([
-                    ['💫 Начать обработку', '💳 Купить кредиты'],
-                    ['💰 Баланс', '👥 Реферальная программа']
-                ]).resize()
+                { reply_markup: mainMenu }
             );
         }
 
@@ -564,13 +513,7 @@ bot.on(message('photo'), async (ctx) => {
             }
         }
 
-        await ctx.reply(
-            errorMessage,
-            Markup.keyboard([
-                ['💫 Начать обработку', '💳 Купить кредиты'],
-                ['💰 Баланс', '👥 Реферальная программа']
-            ]).resize()
-        );
+        await ctx.reply(errorMessage, { reply_markup: mainMenu });
 
         if (processingMsg) {
             await ctx.telegram.deleteMessage(ctx.chat.id, processingMsg.message_id).catch(() => {});
@@ -614,9 +557,9 @@ app.post('/webhook', upload.any(), async (req, res) => {
                 }
 
                 try {
-                    await bot.telegram.sendMessage(userId, errorMessage);
+                    await bot.telegram.sendMessage(userId, errorMessage, { reply_markup: mainMenu });
                     await returnCredit(userId);
-                    await bot.telegram.sendMessage(userId, '💳 Кредит был возвращен из-за ошибки обработки.');
+                    await bot.telegram.sendMessage(userId, '💳 Кредит был возвращен из-за ошибки обработки.', { reply_markup: mainMenu });
                     
                     await pool.query(
                         'UPDATE users SET pending_task_id = NULL WHERE user_id = $1',
@@ -660,10 +603,7 @@ app.post('/webhook', upload.any(), async (req, res) => {
                         {
                             caption: '✨ Обработка изображения завершена!\n' +
                                    'Чтобы обработать новое фото, нажмите кнопку 💫 Начать обработку',
-                            reply_markup: Markup.keyboard([
-                                ['💫 Начать обработку', '💳 Купить кредиты'],
-                                ['💰 Баланс', '👥 Реферальная программа']
-                            ]).resize()
+                            reply_markup: mainMenu
                         }
                     );
                 }
