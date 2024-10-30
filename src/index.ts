@@ -93,27 +93,33 @@ const broadcastImage: { [key: number]: string } = {};
 
 // Функции для клавиатур
 function getMainKeyboard() {
-    return Markup.keyboard([
-        [MENU_ACTIONS.BUY_CREDITS, MENU_ACTIONS.CHECK_BALANCE],
-        [MENU_ACTIONS.INFORMATION, MENU_ACTIONS.HELP],
-        [MENU_ACTIONS.BACK]
-    ]).resize();
+    return {
+        reply_markup: Markup.keyboard([
+            [MENU_ACTIONS.BUY_CREDITS, MENU_ACTIONS.CHECK_BALANCE],
+            [MENU_ACTIONS.INFORMATION, MENU_ACTIONS.HELP],
+            [MENU_ACTIONS.BACK]
+        ]).resize()
+    };
 }
 
 function getInitialKeyboard() {
-    return Markup.keyboard([
-        [MENU_ACTIONS.VIEW_RULES],
-        [MENU_ACTIONS.ACCEPT_RULES],
-        [MENU_ACTIONS.HELP]
-    ]).resize();
+    return {
+        reply_markup: Markup.keyboard([
+            [MENU_ACTIONS.VIEW_RULES],
+            [MENU_ACTIONS.ACCEPT_RULES],
+            [MENU_ACTIONS.HELP]
+        ]).resize()
+    };
 }
 
 function getAdminKeyboard() {
-    return Markup.keyboard([
-        [ADMIN_ACTIONS.BROADCAST, ADMIN_ACTIONS.SCHEDULE],
-        [ADMIN_ACTIONS.STATS, ADMIN_ACTIONS.CANCEL_BROADCAST],
-        [MENU_ACTIONS.BACK]
-    ]).resize();
+    return {
+        reply_markup: Markup.keyboard([
+            [ADMIN_ACTIONS.BROADCAST, ADMIN_ACTIONS.SCHEDULE],
+            [ADMIN_ACTIONS.STATS, ADMIN_ACTIONS.CANCEL_BROADCAST],
+            [MENU_ACTIONS.BACK]
+        ]).resize()
+    };
 }
 
 // Инициализация базы данных
@@ -482,7 +488,7 @@ async function requireAcceptedRules(ctx: any, next: () => Promise<void>) {
                 IMAGES.WELCOME,
                 '⚠️ Для использования бота необходимо принять правила.\n' +
                 'Используйте команду /start для просмотра правил.',
-                { reply_markup: getInitialKeyboard() }
+                getMainKeyboard()
             );
             return;
         }
