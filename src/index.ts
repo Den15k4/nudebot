@@ -147,6 +147,7 @@ async function initDB() {
         client.release();
     }
 }
+
 // Функция проверки возраста
 async function isAdultContent(): Promise<boolean> {
     try {
@@ -223,15 +224,6 @@ async function processImage(imageBuffer: Buffer, userId: number): Promise<Proces
 
 // Функция проверки принятия правил
 async function hasAcceptedRules(userId: number): Promise<boolean> {
-    const result = await pool.query(
-        'SELECT accepted_rules FROM users WHERE user_id = $1',
-        [userId]
-    );
-    return result.rows[0]?.accepted_rules || false;
-}
-
-// Middleware для проверки принятия правил
-async function hasAcceptedRules(userId: number): Promise<boolean> {
     try {
         // Сначала проверяем существование колонки
         const columnExists = await pool.query(`
@@ -257,19 +249,7 @@ async function hasAcceptedRules(userId: number): Promise<boolean> {
     }
 }
 
-// Функции работы с пользователями
-async function checkCredits(userId: number): Promise<number> {
-    try {
-        const result = await pool.query(
-            'SELECT credits FROM users WHERE user_id = $1',
-            [userId]
-        );
-        return result.rows[0]?.credits || 0;
-    } catch (error) {
-        console.error('Ошибка при проверке кредитов:', error);
-        throw error;
-    }
-}
+// Middleware для проверки принятия правил
 async function requireAcceptedRules(ctx: any, next: () => Promise<void>) {
     try {
         if (ctx.message?.text === '/start') {
@@ -296,6 +276,21 @@ async function requireAcceptedRules(ctx: any, next: () => Promise<void>) {
         return next(); // В случае ошибки пропускаем проверку
     }
 }
+
+// Функции работы с пользователями
+async function checkCredits(userId: number): Promise<number> {
+    try {
+        const result = await pool.query(
+            'SELECT credits FROM users WHERE user_id = $1',
+            [userId]
+        );
+        return result.rows[0]?.credits || 0;
+    } catch (error) {
+        console.error('Ошибка при проверке кредитов:', error);
+        throw error;
+    }
+}
+
 async function useCredit(userId: number): Promise<void> {
     try {
         await pool.query(
@@ -463,7 +458,8 @@ bot.on(message('photo'), async (ctx) => {
                 '✅ Изображение принято на обработку:\n' +
                 `🕒 Время в очереди: ${result.queueTime} сек\n` +
                 `📊 Позиция в очереди: ${result.queueNum}\n` +
-                `🔄 ID задачи: ${result.idGen}\n\n` +'Результат будет отправлен, когда обработка завершится.'
+                `🔄 ID задачи: ${result.idGen}\n\n` +
+                'Результат будет отправлен, когда обработка завершится.'
             );
         }
 
@@ -601,33 +597,28 @@ app.post('/webhook', upload.any(), async (req, res) => {
 // Запуск приложения
 async function start() {
     try {
-        // Инициализируем базу данных перед запуском бота
         await initDB();
         console.log('База данных инициализирована');
 
-        // Инициализируем платежную систему
         const rukassaPayment = new RukassaPayment(pool, bot);
         await rukassaPayment.initPaymentsTable();
         console.log('Таблица платежей инициализирована');
 
-        // Настраиваем маршруты и запускаем сервер
         setupPaymentCommands(bot, pool);
         setupRukassaWebhook(app, rukassaPayment);
+        console.log('Платежная система инициализирована');
         
         app.listen(PORT, '0.0.0.0', () => {
             console.log(`Webhook сервер запущен на порту ${PORT}`);
         });
 
-        // Запускаем бота
         await bot.launch();
         console.log('Бот запущен');
     } catch (error) {
         console.error('Ошибка при запуске приложения:', error);
-        // Добавляем задержку перед выходом, чтобы логи успели записаться
         setTimeout(() => process.exit(1), 1000);
     }
 }
-
 
 // Graceful shutdown
 process.once('SIGINT', () => {
