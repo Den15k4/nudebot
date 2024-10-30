@@ -165,41 +165,7 @@ app.use((req, res, next) => {
 
 app.use(express.json());
 // Вспомогательные функции для отправки сообщений
-async function sendMessageWithImage(
-    ctx: any, 
-    imagePath: string, 
-    text: string, 
-    keyboard?: any
-) {
-    try {
-        const image = await fs.readFile(imagePath);
-        if (keyboard) {
-            await ctx.replyWithPhoto(
-                { source: image },
-                {
-                    caption: text,
-                    parse_mode: 'HTML',
-                    ...keyboard
-                }
-            );
-        } else {
-            await ctx.replyWithPhoto(
-                { source: image },
-                {
-                    caption: text,
-                    parse_mode: 'HTML'
-                }
-            );
-        }
-    } catch (error) {
-        console.error('Ошибка при отправке сообщения с изображением:', error);
-        if (keyboard) {
-            await ctx.reply(text, keyboard);
-        } else {
-            await ctx.reply(text);
-        }
-    }
-}
+
 
 interface MessageOptions {
     reply_markup?: any;
