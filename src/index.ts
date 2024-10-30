@@ -361,7 +361,7 @@ async function broadcastMessage(
     for (const user of users) {
         try {
             if (image) {
-                await sendMessageWithImageBot(
+                await sendMessageWithImage(
                     bot,
                     user.user_id,
                     image,
@@ -426,20 +426,6 @@ async function requireAcceptedRules(ctx: any, next: () => Promise<void>) {
     try {
         const userId = ctx.from?.id.toString();
         
-        // Разрешаем админам обходить проверку правил
-        if (isAdmin(userId)) {
-            return next();
-        }
-
-        if (
-            ctx.message?.text === '/start' || 
-            ctx.message?.text === MENU_ACTIONS.BACK || 
-            ctx.message?.text === MENU_ACTIONS.VIEW_RULES ||
-            ctx.message?.text === MENU_ACTIONS.ACCEPT_RULES
-        ) {
-            return next();
-        }
-
         const accepted = await hasAcceptedRules(ctx.from?.id);
         if (!accepted) {
             await sendMessageWithImage(
