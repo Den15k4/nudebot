@@ -19,6 +19,22 @@ const WEBHOOK_URL = process.env.WEBHOOK_URL || 'https://nudebot-production.up.ra
 const PORT = parseInt(process.env.PORT || '8080', 10);
 const RULES_URL = 'https://telegra.ph/Pravila-ispolzovaniya-bota-03-27';
 
+// Константы для кнопок и клавиатур
+const BACK_BUTTON = '◀️ Назад';
+
+const DEFAULT_KEYBOARD = Markup.keyboard([
+    ['💳 Купить кредиты', '💰 Баланс'],
+    ['ℹ️ Информация', '❓ Помощь'],
+    [BACK_BUTTON]
+]).resize();
+
+const INITIAL_KEYBOARD = Markup.keyboard([
+    ['📜 Правила использования'],
+    ['✅ Принимаю правила'],
+    ['❓ Помощь'],
+    [BACK_BUTTON]
+]).resize();
+
 // Константы для изображений
 const IMAGES = {
     WELCOME: path.join(__dirname, '../assets/welcome.jpg'),
@@ -61,6 +77,46 @@ async function sendMessageWithImage(
             await ctx.reply(text, keyboard);
         } else {
             await ctx.reply(text);
+        }
+    }
+}
+
+// Вспомогательная функция для отправки сообщения с изображением через bot
+async function sendMessageWithImageBot(
+    bot: Telegraf,
+    userId: number,
+    imagePath: string,
+    text: string,
+    keyboard?: any
+) {
+    try {
+        const image = await fs.readFile(imagePath);
+        if (keyboard) {
+            await bot.telegram.sendPhoto(
+                userId,
+                { source: image },
+                {
+                    caption: text,
+                    parse_mode: 'HTML',
+                    ...keyboard
+                }
+            );
+        } else {
+            await bot.telegram.sendPhoto(
+                userId,
+                { source: image },
+                {
+                    caption: text,
+                    parse_mode: 'HTML'
+                }
+            );
+        }
+    } catch (error) {
+        console.error('Ошибка при отправке сообщения с изображением:', error);
+        if (keyboard) {
+            await bot.telegram.sendMessage(userId, text, keyboard);
+        } else {
+            await bot.telegram.sendMessage(userId, text);
         }
     }
 }
@@ -135,7 +191,6 @@ app.use((req, res, next) => {
 });
 
 app.use(express.json());
-
 // Создание таблиц в базе данных
 async function initDB() {
     const client = await pool.connect();
@@ -191,7 +246,7 @@ async function initDB() {
     }
 }
 
-// Вспомогательные функции
+// Функция проверки возраста
 async function isAdultContent(): Promise<boolean> {
     try {
         return true;
@@ -201,6 +256,7 @@ async function isAdultContent(): Promise<boolean> {
     }
 }
 
+// Функция проверки принятия правил
 async function hasAcceptedRules(userId: number): Promise<boolean> {
     try {
         const columnExists = await pool.query(`
@@ -226,9 +282,16 @@ async function hasAcceptedRules(userId: number): Promise<boolean> {
     }
 }
 
+// Middleware для проверки принятия правил
 async function requireAcceptedRules(ctx: any, next: () => Promise<void>) {
     try {
-        if (ctx.message?.text === '/start' || ctx.callbackQuery?.data === 'accept_rules') {
+        if (
+            ctx.message?.text === '/start' || 
+            ctx.message?.text === BACK_BUTTON || 
+            ctx.message?.text === '📜 Правила использования' ||
+            ctx.message?.text === '✅ Принимаю правила' ||
+            ctx.callbackQuery?.data === 'accept_rules'
+        ) {
             return next();
         }
 
@@ -243,7 +306,8 @@ async function requireAcceptedRules(ctx: any, next: () => Promise<void>) {
                 ctx,
                 IMAGES.WELCOME,
                 '⚠️ Для использования бота необходимо принять правила.\n' +
-                'Используйте команду /start для просмотра правил.'
+                'Используйте команду /start для просмотра правил.',
+                { reply_markup: INITIAL_KEYBOARD }
             );
             return;
         }
@@ -381,12 +445,6 @@ bot.command('start', async (ctx) => {
         
         const accepted = await hasAcceptedRules(userId);
         if (!accepted) {
-            const keyboard = Markup.keyboard([
-                ['📜 Правила использования'],
-                ['✅ Принимаю правила'],
-                ['❓ Помощь']
-            ]).resize();
-
             await sendMessageWithImage(
                 ctx,
                 IMAGES.WELCOME,
@@ -396,14 +454,9 @@ bot.command('start', async (ctx) => {
                 '1. Ознакомьтесь с правилами использования бота\n' +
                 '2. Подтвердите своё согласие с правилами\n\n' +
                 '❗️ Важно: использование бота возможно только после принятия правил.',
-                { reply_markup: keyboard }
+                { reply_markup: INITIAL_KEYBOARD }
             );
         } else {
-            const keyboard = Markup.keyboard([
-                ['💳 Купить кредиты', '💰 Баланс'],
-                ['ℹ️ Информация', '❓ Помощь']
-            ]).resize();
-
             await sendMessageWithImage(
                 ctx,
                 IMAGES.WELCOME,
@@ -411,7 +464,7 @@ bot.command('start', async (ctx) => {
                 'Для обработки изображений необходимы кредиты:\n' +
                 '1 кредит = 1 обработка изображения\n\n' +
                 'Используйте кнопки меню для навигации:',
-                { reply_markup: keyboard }
+                { reply_markup: DEFAULT_KEYBOARD }
             );
         }
     } catch (error) {
@@ -420,8 +473,43 @@ bot.command('start', async (ctx) => {
     }
 });
 
+// Обработчик кнопки "Назад"
+bot.hears(BACK_BUTTON, async (ctx) => {
+    try {
+        const accepted = await hasAcceptedRules(ctx.from.id);
+        if (!accepted) {
+            await sendMessageWithImage(
+                ctx,
+                IMAGES.WELCOME,
+                '👋 Добро пожаловать!\n\n' +
+                '🤖 Я бот для обработки изображений с использованием нейросети.\n\n' +
+                '⚠️ Перед началом работы, пожалуйста:\n' +
+                '1. Ознакомьтесь с правилами использования бота\n' +
+                '2. Подтвердите своё согласие с правилами\n\n' +
+                '❗️ Важно: использование бота возможно только после принятия правил.',
+                { reply_markup: INITIAL_KEYBOARD }
+            );
+        } else {
+            await sendMessageWithImage(
+                ctx,
+                IMAGES.WELCOME,
+                '🤖 Главное меню\n\n' +
+                'Для обработки изображений необходимы кредиты:\n' +
+                '1 кредит = 1 обработка изображения\n\n' +
+                'Используйте кнопки меню для навигации:',
+                { reply_markup: DEFAULT_KEYBOARD }
+            );
+        }
+    } catch (error) {
+        console.error('Ошибка при возврате в главное меню:', error);
+        await ctx.reply('Произошла ошибка. Попробуйте позже.');
+    }
+});
+
 bot.hears('📜 Правила использования', async (ctx) => {
-    await ctx.telegram.sendMessage(ctx.chat.id, 
+    await sendMessageWithImage(
+        ctx,
+        IMAGES.WELCOME,
         '📜 <b>Правила использования бота:</b>\n\n' +
         '1. Бот предназначен только для лиц старше 18 лет\n' +
         '2. Запрещено использование изображений несовершеннолетних\n' +
@@ -429,7 +517,7 @@ bot.hears('📜 Правила использования', async (ctx) => {
         '4. Пользователь несет ответственность за загружаемый контент\n' +
         '5. Администрация бота не хранит обработанные изображения\n\n' +
         '❗️ Нарушение правил приведет к блокировке без возврата средств',
-        { parse_mode: 'HTML' }
+        { reply_markup: INITIAL_KEYBOARD }
     );
 });
 
@@ -444,11 +532,6 @@ bot.hears('✅ Принимаю правила', async (ctx) => {
         );
 
         if (result.rows.length > 0 && result.rows[0].accepted_rules) {
-            const keyboard = Markup.keyboard([
-                ['💳 Купить кредиты', '💰 Баланс'],
-                ['ℹ️ Информация', '❓ Помощь']
-            ]).resize();
-
             await sendMessageWithImage(
                 ctx,
                 IMAGES.WELCOME,
@@ -457,7 +540,7 @@ bot.hears('✅ Принимаю правила', async (ctx) => {
                 'Для начала работы необходимо приобрести кредиты:\n' +
                 '1 кредит = 1 обработка изображения\n\n' +
                 'Используйте кнопки меню для навигации:',
-                { reply_markup: keyboard }
+                { reply_markup: DEFAULT_KEYBOARD }
             );
         }
     } catch (error) {
@@ -472,12 +555,14 @@ bot.hears('💳 Купить кредиты', async (ctx) => {
         IMAGES.PAYMENT,
         '💳 Выберите способ оплаты:',
         {
-            reply_markup: Markup.inlineKeyboard([
-                [Markup.button.callback('💳 Visa/MC (RUB)', 'currency_RUB')],
-                [Markup.button.callback('💳 Visa/MC (KZT)', 'currency_KZT')],
-                [Markup.button.callback('💳 Visa/MC (UZS)', 'currency_UZS')],
-                [Markup.button.callback('💎 Криптовалюта', 'currency_CRYPTO')]
-            ])
+            reply_markup: {
+                inline_keyboard: [
+                    [Markup.button.callback('💳 Visa/MC (RUB)', 'currency_RUB')],
+                    [Markup.button.callback('💳 Visa/MC (KZT)', 'currency_KZT')],
+                    [Markup.button.callback('💳 Visa/MC (UZS)', 'currency_UZS')],
+                    [Markup.button.callback('💎 Криптовалюта', 'currency_CRYPTO')]
+                ]
+            }
         }
     );
 });
@@ -489,7 +574,8 @@ bot.hears('💰 Баланс', async (ctx) => {
         await sendMessageWithImage(
             ctx,
             IMAGES.BALANCE,
-            `💳 У вас ${credits} кредитов`
+            `💳 У вас ${credits} кредитов`,
+            { reply_markup: DEFAULT_KEYBOARD }
         );
     } catch (error) {
         console.error('Ошибка при проверке кредитов:', error);
@@ -511,7 +597,8 @@ bot.hears('ℹ️ Информация', async (ctx) => {
         '- Хорошее качество\n' +
         '- Четкое изображение лица\n' +
         '- Только совершеннолетние\n\n' +
-        '❓ Нужна помощь? Используйте команду /help'
+        '❓ Нужна помощь? Используйте команду /help',
+        { reply_markup: DEFAULT_KEYBOARD }
     );
 });
 
@@ -524,7 +611,8 @@ bot.hears('❓ Помощь', async (ctx) => {
         '/start - Перезапустить бота\n' +
         '/buy - Купить кредиты\n' +
         '/credits - Проверить баланс\n\n' +
-        'При возникновении проблем обращайтесь в поддержку: @support'
+        'При возникновении проблем обращайтесь в поддержку: @support',
+        { reply_markup: DEFAULT_KEYBOARD }
     );
 });
 
@@ -539,12 +627,15 @@ bot.on(message('photo'), async (ctx) => {
             await sendMessageWithImage(
                 ctx,
                 IMAGES.PAYMENT,
-                'У вас закончились кредиты. Используйте команду /buy для покупки дополнительных кредитов.'
+                'У вас закончились кредиты. Используйте команду /buy для покупки дополнительных кредитов.',
+                { reply_markup: DEFAULT_KEYBOARD }
             );
             return;
         }
 
-        await ctx.reply(
+        await sendMessageWithImage(
+            ctx,
+            IMAGES.PAYMENT_PROCESS,
             '⚠️ Важные правила:\n\n' +
             '1. Изображение должно содержать только людей старше 18 лет\n' +
             '2. Убедитесь, что на фото чётко видно лицо\n' +
@@ -584,7 +675,8 @@ bot.on(message('photo'), async (ctx) => {
                 `🕒 Время в очереди: ${result.queueTime} сек\n` +
                 `📊 Позиция в очереди: ${result.queueNum}\n` +
                 `🔄 ID задачи: ${result.idGen}\n\n` +
-                'Результат будет отправлен, когда обработка завершится.'
+                'Результат будет отправлен, когда обработка завершится.',
+                { reply_markup: DEFAULT_KEYBOARD }
             );
         }
 
@@ -612,7 +704,12 @@ bot.on(message('photo'), async (ctx) => {
             }
         }
 
-        await ctx.reply(errorMessage);
+        await sendMessageWithImage(
+            ctx,
+            IMAGES.PAYMENT,
+            errorMessage,
+            { reply_markup: DEFAULT_KEYBOARD }
+        );
 
         if (processingMsg) {
             await ctx.telegram.deleteMessage(ctx.chat.id, processingMsg.message_id).catch(() => {});
@@ -656,12 +753,20 @@ app.post('/webhook', upload.any(), async (req, res) => {
                 }
 
                 try {
-                    await sendMessageWithImage(ctx, IMAGES.ERROR, errorMessage);
+                    await sendMessageWithImageBot(
+                        bot,
+                        userId,
+                        IMAGES.PAYMENT,
+                        errorMessage,
+                        { reply_markup: DEFAULT_KEYBOARD }
+                    );
                     await returnCredit(userId);
-                    await sendMessageWithImage(
-                        ctx,
+                    await sendMessageWithImageBot(
+                        bot,
+                        userId,
                         IMAGES.BALANCE,
-                        '💳 Кредит был возвращен из-за ошибки обработки.'
+                        '💳 Кредит был возвращен из-за ошибки обработки.',
+                        { reply_markup: DEFAULT_KEYBOARD }
                     );
                     
                     await pool.query(
@@ -701,7 +806,13 @@ app.post('/webhook', upload.any(), async (req, res) => {
 
                 if (imageBuffer) {
                     await bot.telegram.sendPhoto(userId, { source: imageBuffer });
-                    await bot.telegram.sendMessage(userId, '✨ Обработка изображения завершена!');
+                    await sendMessageWithImageBot(
+                        bot,
+                        userId,
+                        IMAGES.PAYMENT_PROCESS,
+                        '✨ Обработка изображения завершена!',
+                        { reply_markup: DEFAULT_KEYBOARD }
+                    );
                 }
 
                 await pool.query(
