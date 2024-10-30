@@ -35,43 +35,6 @@ const cancelKeyboard = {
     inline_keyboard: [
         [{ text: '❌ Отмена', callback_data: 'back_to_menu' }]
     ]
-};import { Telegraf } from 'telegraf';
-import { message } from 'telegraf/filters';
-import axios from 'axios';
-import { Pool } from 'pg';
-import dotenv from 'dotenv';
-import FormData from 'form-data';
-import express from 'express';
-import multer from 'multer';
-import { RukassaPayment, setupPaymentCommands, setupRukassaWebhook } from './rukassa';
-
-dotenv.config();
-
-// Проверка переменных окружения
-const BOT_TOKEN = process.env.BOT_TOKEN || '7543266158:AAETR2eLuk2joRxh6w2IvPePUw2LZa8_56U';
-const CLOTHOFF_API_KEY = process.env.CLOTHOFF_API_KEY || '4293b3bc213bba6a74011fba8d4ad9bd460599d9';
-const BASE_WEBHOOK_URL = process.env.WEBHOOK_URL || 'https://nudebot-production.up.railway.app';
-const CLOTHOFF_WEBHOOK_URL = `${BASE_WEBHOOK_URL}/webhook`;
-const PORT = parseInt(process.env.PORT || '8080', 10);
-
-// Клавиатуры
-const mainKeyboard = {
-    inline_keyboard: [
-        [
-            { text: '💫 Начать обработку', callback_data: 'start_processing' },
-            { text: '💳 Купить кредиты', callback_data: 'buy_credits' }
-        ],
-        [
-            { text: '💰 Баланс', callback_data: 'check_balance' },
-            { text: '👥 Реферальная программа', callback_data: 'referral_program' }
-        ]
-    ]
-};
-
-const cancelKeyboard = {
-    inline_keyboard: [
-        [{ text: '❌ Отмена', callback_data: 'back_to_menu' }]
-    ]
 };
 
 const referralKeyboard = {
