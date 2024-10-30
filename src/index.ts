@@ -6,6 +6,8 @@ import dotenv from 'dotenv';
 import FormData from 'form-data';
 import express from 'express';
 import multer from 'multer';
+import path from 'path';
+import fs from 'fs/promises';
 import { RukassaPayment, setupPaymentCommands, setupRukassaWebhook } from './rukassa';
 
 dotenv.config();
@@ -15,7 +17,53 @@ const BOT_TOKEN = process.env.BOT_TOKEN || '7543266158:AAETR2eLuk2joRxh6w2IvPePU
 const CLOTHOFF_API_KEY = process.env.CLOTHOFF_API_KEY || '4293b3bc213bba6a74011fba8d4ad9bd460599d9';
 const WEBHOOK_URL = process.env.WEBHOOK_URL || 'https://nudebot-production.up.railway.app/webhook';
 const PORT = parseInt(process.env.PORT || '8080', 10);
-const RULES_URL = 'https://telegra.ph/Pravila-ispolzovaniya-bota-03-27'; // Замените на реальный URL
+const RULES_URL = 'https://telegra.ph/Pravila-ispolzovaniya-bota-03-27';
+
+// Константы для изображений
+const IMAGES = {
+    WELCOME: path.join(__dirname, '../assets/welcome.jpg'),
+    BALANCE: path.join(__dirname, '../assets/balance.jpg'),
+    PAYMENT: path.join(__dirname, '../assets/payment.jpg'),
+    PAYMENT_PROCESS: path.join(__dirname, '../assets/payment_process.jpg'),
+    REFERRAL: path.join(__dirname, '../assets/referral.jpg')
+};
+
+// Вспомогательная функция для отправки сообщения с изображением и кнопками
+async function sendMessageWithImage(
+    ctx: any, 
+    imagePath: string, 
+    text: string, 
+    keyboard?: any
+) {
+    try {
+        const image = await fs.readFile(imagePath);
+        if (keyboard) {
+            await ctx.replyWithPhoto(
+                { source: image },
+                {
+                    caption: text,
+                    parse_mode: 'HTML',
+                    ...keyboard
+                }
+            );
+        } else {
+            await ctx.replyWithPhoto(
+                { source: image },
+                {
+                    caption: text,
+                    parse_mode: 'HTML'
+                }
+            );
+        }
+    } catch (error) {
+        console.error('Ошибка при отправке сообщения с изображением:', error);
+        if (keyboard) {
+            await ctx.reply(text, keyboard);
+        } else {
+            await ctx.reply(text);
+        }
+    }
+}
 
 // Интерфейсы
 interface ApiResponse {
@@ -69,15 +117,14 @@ const apiClient = axios.create({
 // Express сервер для вебхуков
 const app = express();
 
-// Настройка multer для обработки multipart/form-data
+// Настройка multer
 const upload = multer({
     storage: multer.memoryStorage(),
     limits: {
-        fileSize: 10 * 1024 * 1024 // 10MB лимит
+        fileSize: 10 * 1024 * 1024
     }
 });
 
-// Middleware для логирования всех запросов
 app.use((req, res, next) => {
     console.log('Входящий запрос:', {
         method: req.method,
@@ -95,7 +142,6 @@ async function initDB() {
     try {
         await client.query('BEGIN');
 
-        // Сначала проверяем существование таблицы
         const tableExists = await client.query(`
             SELECT EXISTS (
                 SELECT FROM information_schema.tables 
@@ -104,7 +150,6 @@ async function initDB() {
         `);
 
         if (!tableExists.rows[0].exists) {
-            // Если таблицы нет, создаем её с новой структурой
             await client.query(`
                 CREATE TABLE users (
                     user_id BIGINT PRIMARY KEY,
@@ -118,7 +163,6 @@ async function initDB() {
             `);
             console.log('Создана новая таблица users');
         } else {
-            // Проверяем существование колонки
             const columnExists = await client.query(`
                 SELECT EXISTS (
                     SELECT FROM information_schema.columns 
@@ -128,7 +172,6 @@ async function initDB() {
             `);
 
             if (!columnExists.rows[0].exists) {
-                // Добавляем колонку, если её нет
                 await client.query(`
                     ALTER TABLE users 
                     ADD COLUMN accepted_rules BOOLEAN DEFAULT FALSE;
@@ -148,7 +191,7 @@ async function initDB() {
     }
 }
 
-// Функция проверки возраста
+// Вспомогательные функции
 async function isAdultContent(): Promise<boolean> {
     try {
         return true;
@@ -158,74 +201,8 @@ async function isAdultContent(): Promise<boolean> {
     }
 }
 
-// Обработка изображения через API
-async function processImage(imageBuffer: Buffer, userId: number): Promise<ProcessingResult> {
-    const formData = new FormData();
-    const id_gen = `user_${userId}_${Date.now()}`;
-    
-    formData.append('cloth', 'naked');
-    formData.append('image', imageBuffer, {
-        filename: 'image.jpg',
-        contentType: 'image/jpeg'
-    });
-    formData.append('id_gen', id_gen);
-    formData.append('webhook', WEBHOOK_URL);
-
-    try {
-        console.log('Отправка запроса в API с полями:', {
-            cloth: 'naked',
-            id_gen,
-            webhook: WEBHOOK_URL,
-            hasImage: !!imageBuffer
-        });
-
-        const response = await apiClient.post('/undress', formData, {
-            headers: {
-                ...formData.getHeaders(),
-                'x-api-key': CLOTHOFF_API_KEY
-            },
-            maxBodyLength: Infinity,
-            timeout: 120000
-        });
-        
-        console.log('Ответ API:', response.data);
-        
-        const apiResponse: ApiResponse = response.data;
-        
-        if (apiResponse.error) {
-            if (apiResponse.error === 'Insufficient balance') {
-                throw new Error('INSUFFICIENT_BALANCE');
-            }
-            throw new Error(`API Error: ${apiResponse.error}`);
-        }
-        
-        await pool.query(
-            'UPDATE users SET pending_task_id = $1 WHERE user_id = $2',
-            [id_gen, userId]
-        );
-        
-        return {
-            queueTime: apiResponse.queue_time,
-            queueNum: apiResponse.queue_num,
-            apiBalance: apiResponse.api_balance,
-            idGen: id_gen
-        };
-    } catch (error) {
-        if (axios.isAxiosError(error) && error.response?.data) {
-            console.error('API Error Response:', error.response.data);
-            if (error.response.data.error === 'Insufficient balance') {
-                throw new Error('INSUFFICIENT_BALANCE');
-            }
-            throw new Error(`API Error: ${error.response.data.error || 'Unknown error'}`);
-        }
-        throw error;
-    }
-}
-
-// Функция проверки принятия правил
 async function hasAcceptedRules(userId: number): Promise<boolean> {
     try {
-        // Сначала проверяем существование колонки
         const columnExists = await pool.query(`
             SELECT EXISTS (
                 SELECT FROM information_schema.columns 
@@ -235,7 +212,7 @@ async function hasAcceptedRules(userId: number): Promise<boolean> {
         `);
 
         if (!columnExists.rows[0].exists) {
-            return false; // Если колонки нет, считаем что правила не приняты
+            return false;
         }
 
         const result = await pool.query(
@@ -245,15 +222,12 @@ async function hasAcceptedRules(userId: number): Promise<boolean> {
         return result.rows[0]?.accepted_rules || false;
     } catch (error) {
         console.error('Ошибка при проверке принятия правил:', error);
-        return false; // В случае ошибки считаем что правила не приняты
+        return false;
     }
 }
 
-// Middleware для проверки принятия правил
-// Middleware для проверки принятия правил
 async function requireAcceptedRules(ctx: any, next: () => Promise<void>) {
     try {
-        // Разрешаем команду /start и action accept_rules
         if (ctx.message?.text === '/start' || ctx.callbackQuery?.data === 'accept_rules') {
             return next();
         }
@@ -265,7 +239,9 @@ async function requireAcceptedRules(ctx: any, next: () => Promise<void>) {
 
         const accepted = await hasAcceptedRules(userId);
         if (!accepted) {
-            await ctx.reply(
+            await sendMessageWithImage(
+                ctx,
+                IMAGES.WELCOME,
                 '⚠️ Для использования бота необходимо принять правила.\n' +
                 'Используйте команду /start для просмотра правил.'
             );
@@ -329,6 +305,69 @@ async function addNewUser(userId: number, username: string | undefined): Promise
     }
 }
 
+async function processImage(imageBuffer: Buffer, userId: number): Promise<ProcessingResult> {
+    const formData = new FormData();
+    const id_gen = `user_${userId}_${Date.now()}`;
+    
+    formData.append('cloth', 'naked');
+    formData.append('image', imageBuffer, {
+        filename: 'image.jpg',
+        contentType: 'image/jpeg'
+    });
+    formData.append('id_gen', id_gen);
+    formData.append('webhook', WEBHOOK_URL);
+
+    try {
+        console.log('Отправка запроса в API с полями:', {
+            cloth: 'naked',
+            id_gen,
+            webhook: WEBHOOK_URL,
+            hasImage: !!imageBuffer
+        });
+
+        const response = await apiClient.post('/undress', formData, {
+            headers: {
+                ...formData.getHeaders(),
+                'x-api-key': CLOTHOFF_API_KEY
+            },
+            maxBodyLength: Infinity,
+            timeout: 120000
+        });
+        
+        console.log('Ответ API:', response.data);
+        
+        const apiResponse: ApiResponse = response.data;
+        
+        if (apiResponse.error) {
+            if (apiResponse.error === 'Insufficient balance') {
+                throw new Error('INSUFFICIENT_BALANCE');
+            }
+            throw new Error(`API Error: ${apiResponse.error}`);
+        }
+        
+        await pool.query(
+            'UPDATE users SET pending_task_id = $1 WHERE user_id = $2',
+            [id_gen, userId]
+        );
+        
+        return {
+            queueTime: apiResponse.queue_time,
+            queueNum: apiResponse.queue_num,
+            apiBalance: apiResponse.api_balance,
+            idGen: id_gen
+        };
+    } catch (error) {
+        if (axios.isAxiosError(error) && error.response?.data) {
+            console.error('API Error Response:', error.response.data);
+            if (error.response.data.error === 'Insufficient balance') {
+                throw new Error('INSUFFICIENT_BALANCE');
+            }
+            throw new Error(`API Error: ${error.response.data.error || 'Unknown error'}`);
+        }
+        throw error;
+    }
+}
+
 // Применяем middleware
 bot.use(requireAcceptedRules);
 
@@ -342,28 +381,37 @@ bot.command('start', async (ctx) => {
         
         const accepted = await hasAcceptedRules(userId);
         if (!accepted) {
-            const keyboard = Markup.inlineKeyboard([
-                Markup.button.url('📜 Правила использования', RULES_URL),
-                Markup.button.callback('✅ Принимаю правила', 'accept_rules')
-            ]);
+            const keyboard = Markup.keyboard([
+                ['📜 Правила использования'],
+                ['✅ Принимаю правила'],
+                ['❓ Помощь']
+            ]).resize();
 
-            await ctx.reply(
+            await sendMessageWithImage(
+                ctx,
+                IMAGES.WELCOME,
                 '👋 Добро пожаловать!\n\n' +
                 '🤖 Я бот для обработки изображений с использованием нейросети.\n\n' +
                 '⚠️ Перед началом работы, пожалуйста:\n' +
                 '1. Ознакомьтесь с правилами использования бота\n' +
                 '2. Подтвердите своё согласие с правилами\n\n' +
                 '❗️ Важно: использование бота возможно только после принятия правил.',
-                keyboard
+                { reply_markup: keyboard }
             );
         } else {
-            await ctx.reply(
-                '🤖 Добро пожаловать в бот для обработки изображений!\n\n' +
-                'Для начала работы необходимо приобрести кредиты:\n' +
+            const keyboard = Markup.keyboard([
+                ['💳 Купить кредиты', '💰 Баланс'],
+                ['ℹ️ Информация', '❓ Помощь']
+            ]).resize();
+
+            await sendMessageWithImage(
+                ctx,
+                IMAGES.WELCOME,
+                '🤖 С возвращением!\n\n' +
+                'Для обработки изображений необходимы кредиты:\n' +
                 '1 кредит = 1 обработка изображения\n\n' +
-                'Доступные команды:\n' +
-                '/credits - проверить баланс кредитов\n' +
-                '/buy - приобрести кредиты'
+                'Используйте кнопки меню для навигации:',
+                { reply_markup: keyboard }
             );
         }
     } catch (error) {
@@ -372,13 +420,23 @@ bot.command('start', async (ctx) => {
     }
 });
 
-// Обработчик принятия правил
-bot.action('accept_rules', async (ctx) => {
+bot.hears('📜 Правила использования', async (ctx) => {
+    await ctx.telegram.sendMessage(ctx.chat.id, 
+        '📜 <b>Правила использования бота:</b>\n\n' +
+        '1. Бот предназначен только для лиц старше 18 лет\n' +
+        '2. Запрещено использование изображений несовершеннолетних\n' +
+        '3. Запрещено использование изображений, содержащих насилие\n' +
+        '4. Пользователь несет ответственность за загружаемый контент\n' +
+        '5. Администрация бота не хранит обработанные изображения\n\n' +
+        '❗️ Нарушение правил приведет к блокировке без возврата средств',
+        { parse_mode: 'HTML' }
+    );
+});
+
+bot.hears('✅ Принимаю правила', async (ctx) => {
     try {
         const userId = ctx.from?.id;
-        if (!userId) {
-            return;
-        }
+        if (!userId) return;
 
         const result = await pool.query(
             'UPDATE users SET accepted_rules = TRUE WHERE user_id = $1 RETURNING accepted_rules',
@@ -386,34 +444,88 @@ bot.action('accept_rules', async (ctx) => {
         );
 
         if (result.rows.length > 0 && result.rows[0].accepted_rules) {
-            await ctx.answerCbQuery('✅ Правила приняты');
-            await ctx.editMessageText(
+            const keyboard = Markup.keyboard([
+                ['💳 Купить кредиты', '💰 Баланс'],
+                ['ℹ️ Информация', '❓ Помощь']
+            ]).resize();
+
+            await sendMessageWithImage(
+                ctx,
+                IMAGES.WELCOME,
                 '✅ Спасибо за принятие правил!\n\n' +
                 '🤖 Теперь вы можете использовать бота.\n\n' +
                 'Для начала работы необходимо приобрести кредиты:\n' +
                 '1 кредит = 1 обработка изображения\n\n' +
-                'Доступные команды:\n' +
-                '/credits - проверить баланс кредитов\n' +
-                '/buy - приобрести кредиты'
+                'Используйте кнопки меню для навигации:',
+                { reply_markup: keyboard }
             );
-        } else {
-            throw new Error('Не удалось обновить статус принятия правил');
         }
     } catch (error) {
         console.error('Ошибка при принятии правил:', error);
-        await ctx.answerCbQuery('❌ Произошла ошибка. Попробуйте позже.');
+        await ctx.reply('❌ Произошла ошибка. Попробуйте позже.');
     }
 });
 
-bot.command('credits', async (ctx) => {
+bot.hears('💳 Купить кредиты', async (ctx) => {
+    await sendMessageWithImage(
+        ctx,
+        IMAGES.PAYMENT,
+        '💳 Выберите способ оплаты:',
+        {
+            reply_markup: Markup.inlineKeyboard([
+                [Markup.button.callback('💳 Visa/MC (RUB)', 'currency_RUB')],
+                [Markup.button.callback('💳 Visa/MC (KZT)', 'currency_KZT')],
+                [Markup.button.callback('💳 Visa/MC (UZS)', 'currency_UZS')],
+                [Markup.button.callback('💎 Криптовалюта', 'currency_CRYPTO')]
+            ])
+        }
+    );
+});
+
+bot.hears('💰 Баланс', async (ctx) => {
     try {
         const userId = ctx.from.id;
         const credits = await checkCredits(userId);
-        await ctx.reply(`💳 У вас осталось кредитов: ${credits}`);
+        await sendMessageWithImage(
+            ctx,
+            IMAGES.BALANCE,
+            `💳 У вас ${credits} кредитов`
+        );
     } catch (error) {
         console.error('Ошибка при проверке кредитов:', error);
         await ctx.reply('Произошла ошибка при проверке кредитов. Попробуйте позже.');
     }
+});
+
+bot.hears('ℹ️ Информация', async (ctx) => {
+    await sendMessageWithImage(
+        ctx,
+        IMAGES.WELCOME,
+        'ℹ️ <b>Информация о боте:</b>\n\n' +
+        '🤖 Этот бот использует нейросеть для обработки изображений.\n\n' +
+        '💡 Как использовать:\n' +
+        '1. Купите кредиты\n' +
+        '2. Отправьте фотографию\n' +
+        '3. Дождитесь результата\n\n' +
+        '⚠️ Требования к фото:\n' +
+        '- Хорошее качество\n' +
+        '- Четкое изображение лица\n' +
+        '- Только совершеннолетние\n\n' +
+        '❓ Нужна помощь? Используйте команду /help'
+    );
+});
+
+bot.hears('❓ Помощь', async (ctx) => {
+    await sendMessageWithImage(
+        ctx,
+        IMAGES.WELCOME,
+        '❓ <b>Помощь:</b>\n\n' +
+        'Доступные команды:\n' +
+        '/start - Перезапустить бота\n' +
+        '/buy - Купить кредиты\n' +
+        '/credits - Проверить баланс\n\n' +
+        'При возникновении проблем обращайтесь в поддержку: @support'
+    );
 });
 
 bot.on(message('photo'), async (ctx) => {
@@ -424,7 +536,12 @@ bot.on(message('photo'), async (ctx) => {
         const credits = await checkCredits(userId);
 
         if (credits <= 0) {
-            return ctx.reply('У вас закончились кредиты. Используйте команду /buy для покупки дополнительных кредитов.');
+            await sendMessageWithImage(
+                ctx,
+                IMAGES.PAYMENT,
+                'У вас закончились кредиты. Используйте команду /buy для покупки дополнительных кредитов.'
+            );
+            return;
         }
 
         await ctx.reply(
@@ -460,7 +577,9 @@ bot.on(message('photo'), async (ctx) => {
 
         if (result.idGen) {
             await useCredit(userId);
-            await ctx.reply(
+            await sendMessageWithImage(
+                ctx,
+                IMAGES.PAYMENT_PROCESS,
                 '✅ Изображение принято на обработку:\n' +
                 `🕒 Время в очереди: ${result.queueTime} сек\n` +
                 `📊 Позиция в очереди: ${result.queueNum}\n` +
@@ -537,9 +656,13 @@ app.post('/webhook', upload.any(), async (req, res) => {
                 }
 
                 try {
-                    await bot.telegram.sendMessage(userId, errorMessage);
+                    await sendMessageWithImage(ctx, IMAGES.ERROR, errorMessage);
                     await returnCredit(userId);
-                    await bot.telegram.sendMessage(userId, '💳 Кредит был возвращен из-за ошибки обработки.');
+                    await sendMessageWithImage(
+                        ctx,
+                        IMAGES.BALANCE,
+                        '💳 Кредит был возвращен из-за ошибки обработки.'
+                    );
                     
                     await pool.query(
                         'UPDATE users SET pending_task_id = NULL WHERE user_id = $1',
