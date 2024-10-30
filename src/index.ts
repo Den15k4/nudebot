@@ -250,9 +250,11 @@ async function hasAcceptedRules(userId: number): Promise<boolean> {
 }
 
 // Middleware для проверки принятия правил
+// Middleware для проверки принятия правил
 async function requireAcceptedRules(ctx: any, next: () => Promise<void>) {
     try {
-        if (ctx.message?.text === '/start') {
+        // Разрешаем команду /start и action accept_rules
+        if (ctx.message?.text === '/start' || ctx.callbackQuery?.data === 'accept_rules') {
             return next();
         }
 
@@ -273,7 +275,7 @@ async function requireAcceptedRules(ctx: any, next: () => Promise<void>) {
         return next();
     } catch (error) {
         console.error('Ошибка в middleware проверки правил:', error);
-        return next(); // В случае ошибки пропускаем проверку
+        return next();
     }
 }
 
@@ -378,21 +380,25 @@ bot.action('accept_rules', async (ctx) => {
             return;
         }
 
-        await pool.query(
-            'UPDATE users SET accepted_rules = TRUE WHERE user_id = $1',
+        const result = await pool.query(
+            'UPDATE users SET accepted_rules = TRUE WHERE user_id = $1 RETURNING accepted_rules',
             [userId]
         );
 
-        await ctx.answerCbQuery('✅ Правила приняты');
-        await ctx.editMessageText(
-            '✅ Спасибо за принятие правил!\n\n' +
-            '🤖 Теперь вы можете использовать бота.\n\n' +
-            'Для начала работы необходимо приобрести кредиты:\n' +
-            '1 кредит = 1 обработка изображения\n\n' +
-            'Доступные команды:\n' +
-            '/credits - проверить баланс кредитов\n' +
-            '/buy - приобрести кредиты'
-        );
+        if (result.rows.length > 0 && result.rows[0].accepted_rules) {
+            await ctx.answerCbQuery('✅ Правила приняты');
+            await ctx.editMessageText(
+                '✅ Спасибо за принятие правил!\n\n' +
+                '🤖 Теперь вы можете использовать бота.\n\n' +
+                'Для начала работы необходимо приобрести кредиты:\n' +
+                '1 кредит = 1 обработка изображения\n\n' +
+                'Доступные команды:\n' +
+                '/credits - проверить баланс кредитов\n' +
+                '/buy - приобрести кредиты'
+            );
+        } else {
+            throw new Error('Не удалось обновить статус принятия правил');
+        }
     } catch (error) {
         console.error('Ошибка при принятии правил:', error);
         await ctx.answerCbQuery('❌ Произошла ошибка. Попробуйте позже.');
