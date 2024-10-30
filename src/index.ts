@@ -201,41 +201,34 @@ async function sendMessageWithImage(
     }
 }
 
-async function sendMessageWithImageBot(
-    bot: Telegraf,
-    userId: number,
-    imagePath: string,
-    text: string,
-    keyboard?: any
+interface MessageOptions {
+    reply_markup?: any;
+    parse_mode?: string;
+    [key: string]: any;
+}
+
+async function sendMessageWithImage(
+    ctx: any, 
+    imagePath: string, 
+    text: string, 
+    options?: MessageOptions
 ) {
     try {
         const image = await fs.readFile(imagePath);
-        if (keyboard) {
-            await bot.telegram.sendPhoto(
-                userId,
-                { source: image },
-                {
-                    caption: text,
-                    parse_mode: 'HTML',
-                    ...keyboard
-                }
-            );
-        } else {
-            await bot.telegram.sendPhoto(
-                userId,
-                { source: image },
-                {
-                    caption: text,
-                    parse_mode: 'HTML'
-                }
-            );
-        }
+        await ctx.replyWithPhoto(
+            { source: image },
+            {
+                caption: text,
+                parse_mode: 'HTML',
+                ...options
+            }
+        );
     } catch (error) {
         console.error('Ошибка при отправке сообщения с изображением:', error);
-        if (keyboard) {
-            await bot.telegram.sendMessage(userId, text, keyboard);
+        if (options?.reply_markup) {
+            await ctx.reply(text, options);
         } else {
-            await bot.telegram.sendMessage(userId, text);
+            await ctx.reply(text);
         }
     }
 }
