@@ -1,3 +1,42 @@
+import { Context } from 'telegraf';
+import fs from 'fs/promises';
+import { ParseMode } from 'telegraf/typings/core/types/typegram';
+
+export interface MessageOptions {
+    reply_markup?: any;
+    parse_mode?: ParseMode;
+    [key: string]: any;
+}
+
+export async function sendMessageWithImage(
+    ctx: Context,
+    imagePath: string,
+    text: string,
+    options?: MessageOptions
+) {
+    try {
+        const image = await fs.readFile(imagePath);
+        await ctx.replyWithPhoto(
+            { source: image },
+            {
+                caption: text,
+                parse_mode: 'HTML' as ParseMode,
+                ...(options || {})
+            }
+        );
+    } catch (error) {
+        console.error('Ошибка при отправке сообщения с изображением:', error);
+        if (options?.reply_markup) {
+            await ctx.reply(text, {
+                parse_mode: 'HTML' as ParseMode,
+                ...options
+            });
+        } else {
+            await ctx.reply(text, { parse_mode: 'HTML' as ParseMode });
+        }
+    }
+}
+
 export const MESSAGES = {
     WELCOME: (isAccepted: boolean) => isAccepted ? 
         '🤖 С возвращением!\n\n' +

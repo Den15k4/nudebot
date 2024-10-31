@@ -10,7 +10,7 @@ export async function isAdmin(userId: string): Promise<boolean> {
     return ENV.ADMIN_IDS.includes(userId);
 }
 
-export async function requireAcceptedRules(ctx: Context, next: Next): Promise<void> {
+export async function requireAcceptedRules(ctx: Context, next: () => Promise<void>): Promise<void> {
     try {
         const userId = ctx.from?.id.toString();
         

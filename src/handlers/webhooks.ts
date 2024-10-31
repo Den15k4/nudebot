@@ -6,7 +6,7 @@ import { bot } from '../index';
 import { PATHS } from '../config/environment';
 import { getMainKeyboard } from '../utils/keyboard';
 
-export async function handleClothoffWebhook(req: Request, res: Response): Promise<void> {
+export async function handleClothoffWebhook(req: Request, res: Response): Promise<any> {
     try {
         console.log('Получен webhook от Clothoff:', {
             body: req.body,

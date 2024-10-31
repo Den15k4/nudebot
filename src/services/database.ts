@@ -14,6 +14,60 @@ class DatabaseService {
         });
     }
 
+    async hasAcceptedRules(userId: number): Promise<boolean> {
+        const result = await this.pool.query(
+            'SELECT accepted_rules FROM users WHERE user_id = $1',
+            [userId]
+        );
+        return result.rows[0]?.accepted_rules || false;
+    }
+    
+    async getAllUsers(): Promise<{ user_id: number }[]> {
+        const result = await this.pool.query('SELECT user_id FROM users WHERE accepted_rules = TRUE');
+        return result.rows;
+    }
+    
+    async getScheduledBroadcasts() {
+        const result = await this.pool.query(`
+            SELECT * FROM scheduled_broadcasts 
+            WHERE scheduled_time > NOW()
+        `);
+        return result.rows;
+    }
+    
+    async createPayment(
+        userId: number, 
+        merchantOrderId: string, 
+        amount: number, 
+        credits: number, 
+        currency: string
+    ): Promise<void> {
+        await this.pool.query(`
+            INSERT INTO payments (user_id, merchant_order_id, amount, credits, status, currency) 
+            VALUES ($1, $2, $3, $4, 'pending', $5)`,
+            [userId, merchantOrderId, amount, credits, currency]
+        );
+    }
+    
+    async deletePayment(merchantOrderId: string): Promise<void> {
+        await this.pool.query('DELETE FROM payments WHERE merchant_order_id = $1', [merchantOrderId]);
+    }
+    
+    async getPaymentByMerchantId(merchantOrderId: string) {
+        const result = await this.pool.query(
+            'SELECT * FROM payments WHERE merchant_order_id = $1',
+            [merchantOrderId]
+        );
+        return result.rows[0];
+    }
+    
+    async updatePaymentStatus(id: number, status: string, orderId: string): Promise<void> {
+        await this.pool.query(
+            'UPDATE payments SET status = $1, order_id = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3',
+            [status, orderId, id]
+        );
+    }
+
     async initTables(): Promise<void> {
         const client = await this.pool.connect();
         try {

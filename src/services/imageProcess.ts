@@ -2,6 +2,7 @@ import axios from 'axios';
 import { ENV } from '../config/environment';
 import { ApiResponse, ProcessingResult } from '../types/interfaces';
 import { db } from './database';
+import FormData from 'form-data';
 
 class ImageProcessService {
     private apiClient = axios.create({
@@ -14,25 +15,20 @@ class ImageProcessService {
 
     async processImage(imageBuffer: Buffer, userId: number): Promise<ProcessingResult> {
         const formData = new FormData();
-        const id_gen = `user_${userId}_${Date.now()}`;
-        
-        formData.append('cloth', 'naked');
-        formData.append('image', imageBuffer, {
-            filename: 'image.jpg',
-            contentType: 'image/jpeg'
-        });
-        formData.append('id_gen', id_gen);
-        formData.append('webhook', ENV.WEBHOOK_URL);
+        const formData = new FormData();
+formData.append('cloth', 'naked');
+formData.append('image', imageBuffer, 'image.jpg');  // Изменили способ добавления файла
+formData.append('id_gen', id_gen);
+formData.append('webhook', ENV.WEBHOOK_URL);
 
-        try {
-            const response = await this.apiClient.post('/undress', formData, {
-                headers: {
-                    ...formData.getHeaders(),
-                    'x-api-key': ENV.CLOTHOFF_API_KEY
-                },
-                maxBodyLength: Infinity,
-                timeout: 120000
-            });
+const response = await this.apiClient.post('/undress', formData, {
+    headers: {
+        ...formData.getHeaders(), // Теперь это будет работать
+        'x-api-key': ENV.CLOTHOFF_API_KEY
+    },
+    maxBodyLength: Infinity,
+    timeout: 120000
+});
             
             const apiResponse: ApiResponse = response.data;
             
