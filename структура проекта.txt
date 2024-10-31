@@ -1,0 +1,41 @@
+project/
+├── assets/
+│   ├── balance.jpg
+│   ├── payment.jpg
+│   ├── payment_process.jpg
+│   ├── referral.jpg
+│   └── welcome.jpg
+├── src/
+│   ├── config/
+│   │   ├── constants.ts         # Константы приложения
+│   │   └── environment.ts       # Переменные окружения
+│   │
+│   ├── handlers/
+│   │   ├── admin.ts            # Обработчики админ-команд
+│   │   ├── commands.ts         # Обработчики основных команд
+│   │   └── webhooks.ts         # Обработчики вебхуков
+│   │
+│   ├── middlewares/
+│   │   └── auth.ts             # Middleware авторизации
+│   │
+│   ├── services/
+│   │   ├── broadcast.ts        # Сервис рассылок
+│   │   ├── database.ts         # Сервис работы с БД
+│   │   ├── imageProcess.ts     # Сервис обработки изображений
+│   │   └── payment.ts          # Сервис платежей
+│   │
+│   ├── types/
+│   │   └── interfaces.ts       # Типы и интерфейсы
+│   │
+│   ├── utils/
+│   │   ├── keyboard.ts         # Функции создания клавиатур
+│   │   ├── messages.ts         # Шаблоны сообщений
+│   │   └── photoProcessor.ts   # Обработка фотографий
+│   │
+│   └── index.ts               # Основной файл приложения
+│
+├── .env                       # Файл с переменными окружения
+├── .gitignore                # Игнорируемые git файлы
+├── package.json              # Зависимости и скрипты
+├── tsconfig.json             # Конфигурация TypeScript
+└── README.md                 # Документация проекта
