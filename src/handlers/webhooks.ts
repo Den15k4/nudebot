@@ -10,12 +10,15 @@ export async function handleClothoffWebhook(req: Request, res: Response) {
     try {
         console.log('Получен webhook от Clothoff:', {
             body: req.body,
-            files: req.files
+            files: req.files,
+            headers: req.headers,
+            query: req.query
         });
 
         const body = req.body;
         const files = req.files as Express.Multer.File[] || [];
 
+        // Если получена ошибка
         if (body.status === '500' || body.img_message || body.img_message_2) {
             const user = await db.getUserByPendingTask(body.id_gen);
             if (user) {
@@ -30,13 +33,12 @@ export async function handleClothoffWebhook(req: Request, res: Response) {
                 }
 
                 try {
-                    await broadcastService.sendMessageWithImage(
+                    await bot.telegram.sendMessage(
                         user.user_id,
-                        PATHS.ASSETS.PAYMENT,
                         errorMessage,
-                        getMainKeyboard()
+                        { parse_mode: 'HTML' }
                     );
-                    await db.updateUserCredits(user.user_id, 1);
+                    await db.updateUserCredits(user.user_id, 1); // Возвращаем кредит
                     await db.setUserPendingTask(user.user_id, null);
                 } catch (error) {
                     console.error('Ошибка при обработке ошибки webhook:', error);
@@ -47,6 +49,12 @@ export async function handleClothoffWebhook(req: Request, res: Response) {
 
         // Обработка успешного результата
         if (body.result || files.length > 0) {
+            console.log('Получен результат обработки:', {
+                hasResult: !!body.result,
+                filesCount: files.length,
+                idGen: body.id_gen
+            });
+
             const user = await db.getUserByPendingTask(body.id_gen);
             if (user) {
                 let imageBuffer: Buffer | undefined;
@@ -57,17 +65,41 @@ export async function handleClothoffWebhook(req: Request, res: Response) {
                 }
 
                 if (imageBuffer) {
-                    await bot.telegram.sendPhoto(user.user_id, { source: imageBuffer });
-                    await broadcastService.sendMessageWithImage(
+                    try {
+                        await bot.telegram.sendPhoto(
+                            user.user_id,
+                            { source: imageBuffer },
+                            { 
+                                caption: '✨ Обработка изображения завершена!',
+                                reply_markup: {
+                                    inline_keyboard: [
+                                        [{ text: '📸 Обработать ещё', callback_data: 'action_process_photo' }],
+                                        [{ text: '◀️ В главное меню', callback_data: 'action_back' }]
+                                    ]
+                                }
+                            }
+                        );
+                    } catch (error) {
+                        console.error('Ошибка при отправке результата:', error);
+                        await bot.telegram.sendMessage(
+                            user.user_id,
+                            '❌ Произошла ошибка при отправке результата обработки.'
+                        );
+                    }
+                } else {
+                    console.error('Не удалось получить изображение из результата');
+                    await bot.telegram.sendMessage(
                         user.user_id,
-                        PATHS.ASSETS.PAYMENT_PROCESS,
-                        '✨ Обработка изображения завершена!',
-                        getMainKeyboard()
+                        '❌ Произошла ошибка при получении результата обработки.'
                     );
                 }
 
                 await db.setUserPendingTask(user.user_id, null);
+            } else {
+                console.error('Пользователь не найден для id_gen:', body.id_gen);
             }
+        } else {
+            console.log('Не найдено результата в webhook данных');
         }
 
         return res.json({ success: true });

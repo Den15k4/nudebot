@@ -23,6 +23,37 @@ export async function handleCallbacks(ctx: Context) {
         await ctx.answerCbQuery();
 
         switch (action) {
+            case 'action_process_photo':
+                const userCredits = await db.checkCredits(userId);
+                if (userCredits <= 0) {
+                    await sendMessageWithImage(
+                        ctx,
+                        PATHS.ASSETS.PAYMENT,
+                        '❌ У вас недостаточно кредитов для обработки фото.\n' +
+                        'Используйте команду /buy для покупки кредитов.',
+                        getMainKeyboard()
+                    );
+                } else {
+                    await sendMessageWithImage(
+                        ctx,
+                        PATHS.ASSETS.PAYMENT_PROCESS,
+                        '📸 Отправьте фотографию для обработки.\n\n' +
+                        '⚠️ Требования к фото:\n' +
+                        '- Хорошее качество\n' +
+                        '- Четкое изображение лица\n' +
+                        '- Только совершеннолетние\n\n' +
+                        `💳 У вас ${userCredits} кредитов`,
+                        {
+                            reply_markup: {
+                                inline_keyboard: [
+                                    [{ text: '◀️ Назад в меню', callback_data: 'action_back' }]
+                                ]
+                            }
+                        }
+                    );
+                }
+                break;
+
             case 'action_buy':
                 await sendMessageWithImage(
                     ctx,
@@ -48,6 +79,31 @@ export async function handleCallbacks(ctx: Context) {
                     ctx,
                     PATHS.ASSETS.BALANCE,
                     `💳 У вас ${credits} кредитов`,
+                    getMainKeyboard()
+                );
+                break;
+
+            case 'action_referrals':
+                const stats = await db.getReferralStats(userId);
+                const transactions = await db.getRecentReferralTransactions(userId);
+                
+                let message = '👥 <b>Ваша реферальная программа:</b>\n\n' +
+                    `🔢 Количество рефералов: ${stats.count}\n` +
+                    `💰 Заработано: ${stats.earnings}₽\n\n` +
+                    '🔗 Ваша реферальная ссылка:\n' +
+                    `https://t.me/${ctx.botInfo?.username}?start=${userId}`;
+
+                if (transactions.length > 0) {
+                    message += '\n\n📝 Последние начисления:\n';
+                    transactions.forEach(t => {
+                        message += `${t.username}: ${t.amount}₽ (${new Date(t.created_at).toLocaleDateString()})\n`;
+                    });
+                }
+
+                await sendMessageWithImage(
+                    ctx,
+                    PATHS.ASSETS.REFERRAL,
+                    message,
                     getMainKeyboard()
                 );
                 break;

@@ -39,7 +39,9 @@ app.use((req, res, next) => {
     console.log('Входящий запрос:', {
         method: req.method,
         path: req.path,
-        headers: req.headers
+        headers: req.headers,
+        query: req.query,
+        body: req.method === 'GET' ? undefined : req.body
     });
     next();
 });
@@ -55,6 +57,7 @@ bot.command('credits', commandHandlers.handleCredits);
 bot.command('buy', commandHandlers.handleBuy);
 bot.command('help', commandHandlers.handleHelp);
 bot.command('admin', adminHandlers.handleAdminCommand);
+bot.command('referrals', commandHandlers.handleReferrals);
 
 // Обработчик callback'ов (inline кнопок)
 bot.on('callback_query', handleCallbacks);
@@ -64,6 +67,7 @@ bot.on('photo', processPhotoMessage);
 
 // Express endpoints
 app.get('/health', webhookHandlers.handleHealth);
+app.post('/', upload.any(), webhookHandlers.handleClothoffWebhook);  // Добавлен корневой путь
 app.post('/webhook', upload.any(), webhookHandlers.handleClothoffWebhook);
 app.post('/rukassa/webhook', webhookHandlers.handleRukassaWebhook);
 app.get('/payment/success', webhookHandlers.handlePaymentSuccess);
