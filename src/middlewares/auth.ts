@@ -1,4 +1,4 @@
-import { Context, Next } from 'telegraf';
+import { Context } from 'telegraf';
 import { MENU_ACTIONS } from '../config/constants';
 import { ENV } from '../config/environment';
 import { db } from '../services/database';

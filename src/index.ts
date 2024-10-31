@@ -13,15 +13,14 @@ import { requireAcceptedRules } from './middlewares/auth';
 import * as commandHandlers from './handlers/commands';
 import * as adminHandlers from './handlers/admin';
 import * as webhookHandlers from './handlers/webhooks';
+import { handleCallbacks } from './handlers/callbacks';
+import { processPhotoMessage } from './utils/photoProcess';
 
 // Services
 import { db } from './services/database';
 import { imageProcessor } from './services/imageProcess';
 import { initBroadcastService, broadcastService } from './services/broadcast';
 import { initPaymentService, paymentService } from './services/payment';
-
-// Utils
-//import { processPhotoMessage } from './utils/photoProcessor';
 
 // Инициализация бота
 export const bot = new Telegraf(ENV.BOT_TOKEN);
@@ -47,30 +46,18 @@ app.use((req, res, next) => {
 
 app.use(express.json());
 
-// Применяем middleware для бота
+// Применяем middleware
 bot.use(requireAcceptedRules);
 
-// Основные команды
+// Обработчики команд
 bot.command('start', commandHandlers.handleStart);
 bot.command('credits', commandHandlers.handleCredits);
 bot.command('buy', commandHandlers.handleBuy);
 bot.command('help', commandHandlers.handleHelp);
-
-// Команды админа
 bot.command('admin', adminHandlers.handleAdminCommand);
 
-// Обработчики меню
-bot.hears(MENU_ACTIONS.VIEW_RULES, commandHandlers.handleRules);
-bot.hears(MENU_ACTIONS.BACK, commandHandlers.handleBack);
-bot.hears(MENU_ACTIONS.BUY_CREDITS, commandHandlers.handleBuy);
-bot.hears(MENU_ACTIONS.CHECK_BALANCE, commandHandlers.handleCredits);
-bot.hears(MENU_ACTIONS.HELP, commandHandlers.handleHelp);
-
-// Админские действия
-bot.hears(ADMIN_ACTIONS.BROADCAST, adminHandlers.handleBroadcastCommand);
-bot.hears(ADMIN_ACTIONS.SCHEDULE, adminHandlers.handleScheduleCommand);
-bot.hears(ADMIN_ACTIONS.STATS, adminHandlers.handleStats);
-bot.hears(ADMIN_ACTIONS.CANCEL_BROADCAST, adminHandlers.handleCancelBroadcast);
+// Обработчик callback'ов (inline кнопок)
+bot.on('callback_query', handleCallbacks);
 
 // Обработка фотографий
 bot.on('photo', processPhotoMessage);
@@ -82,7 +69,7 @@ app.post('/rukassa/webhook', webhookHandlers.handleRukassaWebhook);
 app.get('/payment/success', webhookHandlers.handlePaymentSuccess);
 app.get('/payment/fail', webhookHandlers.handlePaymentFail);
 
-// Функция запуска
+// Запуск приложения
 async function start() {
     try {
         // Инициализация базы данных
@@ -112,7 +99,7 @@ async function start() {
     }
 }
 
-// Обработка завершения работы
+// Graceful shutdown
 process.once('SIGINT', () => {
     bot.stop('SIGINT');
     db.close();
@@ -123,7 +110,6 @@ process.once('SIGTERM', () => {
     db.close();
 });
 
-// Запуск приложения
 start();
 
 // Для использования в других модулях

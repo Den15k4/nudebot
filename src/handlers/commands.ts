@@ -80,6 +80,23 @@ export async function handleRules(ctx: Context): Promise<void> {
     );
 }
 
+export async function handleAcceptRules(ctx: Context): Promise<void> {
+    try {
+        if (!ctx.from) return;
+
+        await db.updateUserCredits(ctx.from.id, 0); // Обновляем статус правил
+        await sendMessageWithImage(
+            ctx,
+            PATHS.ASSETS.WELCOME,
+            MESSAGES.RULES_ACCEPTED,
+            getMainKeyboard()
+        );
+    } catch (error) {
+        console.error('Ошибка при принятии правил:', error);
+        await ctx.reply('❌ Произошла ошибка. Попробуйте позже.');
+    }
+}
+
 export async function handleBack(ctx: Context): Promise<void> {
     try {
         if (!ctx.from) return;
