@@ -1,29 +1,34 @@
 import { Markup } from 'telegraf';
 import { MENU_ACTIONS, ADMIN_ACTIONS } from '../config/constants';
+import { InlineKeyboardButton } from 'telegraf/typings/core/types/typegram';
 
 export function getMainKeyboard() {
     return {
-        reply_markup: Markup.inlineKeyboard([
-            [
-                Markup.button.callback('💳 Купить кредиты', 'action_buy'),
-                Markup.button.callback('💰 Баланс', 'action_balance')
-            ],
-            [
-                Markup.button.callback('ℹ️ Информация', 'action_info'),
-                Markup.button.callback('❓ Помощь', 'action_help')
-            ],
-            [Markup.button.callback('◀️ Назад', 'action_back')]
-        ])
+        reply_markup: {
+            inline_keyboard: [
+                [
+                    { text: '💳 Купить кредиты', callback_data: 'action_buy' },
+                    { text: '💰 Баланс', callback_data: 'action_balance' }
+                ],
+                [
+                    { text: 'ℹ️ Информация', callback_data: 'action_info' },
+                    { text: '❓ Помощь', callback_data: 'action_help' }
+                ],
+                [{ text: '◀️ Назад', callback_data: 'action_back' }]
+            ]
+        }
     };
 }
 
 export function getInitialKeyboard() {
     return {
-        reply_markup: Markup.inlineKeyboard([
-            [Markup.button.callback('📜 Правила использования', 'action_rules')],
-            [Markup.button.callback('✅ Принимаю правила', 'action_accept_rules')],
-            [Markup.button.callback('❓ Помощь', 'action_help')]
-        ])
+        reply_markup: {
+            inline_keyboard: [
+                [{ text: '📜 Правила использования', callback_data: 'action_rules' }],
+                [{ text: '✅ Принимаю правила', callback_data: 'action_accept_rules' }],
+                [{ text: '❓ Помощь', callback_data: 'action_help' }]
+            ]
+        }
     };
 }
 

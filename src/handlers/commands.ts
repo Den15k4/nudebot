@@ -20,14 +20,36 @@ export async function handleStart(ctx: Context): Promise<void> {
                 ctx,
                 PATHS.ASSETS.WELCOME,
                 MESSAGES.WELCOME(false),
-                getInitialKeyboard()
+                {
+                    reply_markup: {
+                        inline_keyboard: [
+                            [{ text: '📜 Правила использования', callback_data: 'action_rules' }],
+                            [{ text: '✅ Принимаю правила', callback_data: 'action_accept_rules' }],
+                            [{ text: '❓ Помощь', callback_data: 'action_help' }]
+                        ]
+                    }
+                }
             );
         } else {
             await sendMessageWithImage(
                 ctx,
                 PATHS.ASSETS.WELCOME,
                 MESSAGES.WELCOME(true),
-                getMainKeyboard()
+                {
+                    reply_markup: {
+                        inline_keyboard: [
+                            [
+                                { text: '💳 Купить кредиты', callback_data: 'action_buy' },
+                                { text: '💰 Баланс', callback_data: 'action_balance' }
+                            ],
+                            [
+                                { text: 'ℹ️ Информация', callback_data: 'action_info' },
+                                { text: '❓ Помощь', callback_data: 'action_help' }
+                            ],
+                            [{ text: '◀️ Назад', callback_data: 'action_back' }]
+                        ]
+                    }
+                }
             );
         }
     } catch (error) {
