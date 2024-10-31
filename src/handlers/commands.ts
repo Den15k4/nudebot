@@ -5,6 +5,39 @@ import { getMainKeyboard, getInitialKeyboard, getPaymentKeyboard } from '../util
 import { MESSAGES } from '../utils/messages';
 import { PATHS } from '../config/environment';
 
+export async function handleReferrals(ctx: Context): Promise<void> {
+    try {
+        if (!ctx.from) return;
+
+        const userId = ctx.from.id;
+        const stats = await db.getReferralStats(userId);
+        const transactions = await db.getRecentReferralTransactions(userId);
+        
+        let message = '👥 <b>Ваша реферальная программа:</b>\n\n' +
+            `🔢 Количество рефералов: ${stats.count}\n` +
+            `💰 Заработано: ${stats.earnings}₽\n\n` +
+            '🔗 Ваша реферальная ссылка:\n' +
+            `https://t.me/${ctx.botInfo?.username}?start=${userId}`;
+
+        if (transactions.length > 0) {
+            message += '\n\n📝 Последние начисления:\n';
+            transactions.forEach(t => {
+                message += `${t.username}: ${t.amount}₽ (${new Date(t.created_at).toLocaleDateString()})\n`;
+            });
+        }
+
+        await sendMessageWithImage(
+            ctx,
+            PATHS.ASSETS.REFERRAL,
+            message,
+            getMainKeyboard()
+        );
+    } catch (error) {
+        console.error('Ошибка при получении реферальной статистики:', error);
+        await ctx.reply('❌ Произошла ошибка. Попробуйте позже.');
+    }
+}
+
 export async function handleStart(ctx: Context): Promise<void> {
     try {
         if (!ctx.from) return;
@@ -12,7 +45,27 @@ export async function handleStart(ctx: Context): Promise<void> {
         const userId = ctx.from.id;
         const username = ctx.from.username;
 
+        // Проверяем наличие реферального кода
+        const startPayload = (ctx.message && 'text' in ctx.message) ? 
+            ctx.message.text.split(' ')[1] : null;
+
         await db.addUser(userId, username);
+        
+        // Обработка реферальной ссылки
+        if (startPayload) {
+            const referrerId = parseInt(startPayload);
+            if (!isNaN(referrerId) && referrerId !== userId) {
+                await db.addReferral(userId, referrerId);
+                await sendMessageWithImage(
+                    ctx,
+                    PATHS.ASSETS.REFERRAL,
+                    '🎉 Вы присоединились по реферальной ссылке!\n' +
+                    'Ваш пригласивший получит 50% от ваших оплат.',
+                    getInitialKeyboard()
+                );
+                return;
+            }
+        }
         
         const accepted = await db.hasAcceptedRules(userId);
         if (!accepted) {
@@ -20,36 +73,14 @@ export async function handleStart(ctx: Context): Promise<void> {
                 ctx,
                 PATHS.ASSETS.WELCOME,
                 MESSAGES.WELCOME(false),
-                {
-                    reply_markup: {
-                        inline_keyboard: [
-                            [{ text: '📜 Правила использования', callback_data: 'action_rules' }],
-                            [{ text: '✅ Принимаю правила', callback_data: 'action_accept_rules' }],
-                            [{ text: '❓ Помощь', callback_data: 'action_help' }]
-                        ]
-                    }
-                }
+                getInitialKeyboard()
             );
         } else {
             await sendMessageWithImage(
                 ctx,
                 PATHS.ASSETS.WELCOME,
                 MESSAGES.WELCOME(true),
-                {
-                    reply_markup: {
-                        inline_keyboard: [
-                            [
-                                { text: '💳 Купить кредиты', callback_data: 'action_buy' },
-                                { text: '💰 Баланс', callback_data: 'action_balance' }
-                            ],
-                            [
-                                { text: 'ℹ️ Информация', callback_data: 'action_info' },
-                                { text: '❓ Помощь', callback_data: 'action_help' }
-                            ],
-                            [{ text: '◀️ Назад', callback_data: 'action_back' }]
-                        ]
-                    }
-                }
+                getMainKeyboard()
             );
         }
     } catch (error) {
