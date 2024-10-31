@@ -8,6 +8,9 @@ export interface MessageOptions {
     [key: string]: any;
 }
 
+// Храним последнее сообщение для каждого пользователя
+const lastMessageIds = new Map<number, number>();
+
 export async function sendMessageWithImage(
     ctx: Context,
     imagePath: string,
@@ -15,8 +18,17 @@ export async function sendMessageWithImage(
     options?: MessageOptions
 ) {
     try {
+        // Удаляем предыдущее сообщение
+        const userId = ctx.from?.id;
+        if (userId) {
+            const lastMessageId = lastMessageIds.get(userId);
+            if (lastMessageId) {
+                await ctx.telegram.deleteMessage(userId, lastMessageId).catch(() => {});
+            }
+        }
+
         const image = await fs.readFile(imagePath);
-        await ctx.replyWithPhoto(
+        const sentMessage = await ctx.replyWithPhoto(
             { source: image },
             {
                 caption: text,
@@ -24,15 +36,26 @@ export async function sendMessageWithImage(
                 ...(options || {})
             }
         );
+
+        // Сохраняем ID нового сообщения
+        if (userId && sentMessage) {
+            lastMessageIds.set(userId, sentMessage.message_id);
+        }
     } catch (error) {
         console.error('Ошибка при отправке сообщения с изображением:', error);
         if (options?.reply_markup) {
-            await ctx.reply(text, {
+            const sentMessage = await ctx.reply(text, {
                 parse_mode: 'HTML' as ParseMode,
                 ...options
             });
+            if (ctx.from?.id && sentMessage) {
+                lastMessageIds.set(ctx.from.id, sentMessage.message_id);
+            }
         } else {
-            await ctx.reply(text, { parse_mode: 'HTML' as ParseMode });
+            const sentMessage = await ctx.reply(text, { parse_mode: 'HTML' as ParseMode });
+            if (ctx.from?.id && sentMessage) {
+                lastMessageIds.set(ctx.from.id, sentMessage.message_id);
+            }
         }
     }
 }
@@ -69,7 +92,8 @@ export const MESSAGES = {
         'Доступные команды:\n' +
         '/start - Перезапустить бота\n' +
         '/buy - Купить кредиты\n' +
-        '/credits - Проверить баланс\n\n' +
+        '/credits - Проверить баланс\n' +
+        '/referrals - Реферальная программа\n\n' +
         'При возникновении проблем обращайтесь в поддержку: @support',
 
     ERRORS: {
@@ -81,5 +105,23 @@ export const MESSAGES = {
             'К сожалению, у сервиса закончился баланс API. ' +
             'Пожалуйста, попробуйте позже или свяжитесь с администратором бота.\n\n' +
             'Ваши кредиты сохранены и будут доступны позже.'
+    },
+
+    REFERRAL: {
+        INVITE: (userId: number) => 
+            '👥 <b>Реферальная программа:</b>\n\n' +
+            '1. Пригласите друзей по вашей реферальной ссылке\n' +
+            '2. Получайте 50% от каждого их платежа\n' +
+            '3. Бонусы начисляются автоматически\n\n' +
+            '🔗 Ваша реферальная ссылка:\n' +
+            `https://t.me/${process.env.BOT_USERNAME}?start=${userId}`,
+
+        SUCCESS: '🎉 Вы успешно присоединились по реферальной ссылке!\n' +
+            'Ваш пригласивший будет получать 50% от ваших оплат.',
+
+        STATS: (count: number, earnings: number) =>
+            '📊 <b>Ваша реферальная статистика:</b>\n\n' +
+            `👥 Приглашено пользователей: ${count}\n` +
+            `💰 Заработано: ${earnings}₽`
     }
 } as const;

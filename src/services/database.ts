@@ -19,6 +19,7 @@ class DatabaseService {
         try {
             await client.query('BEGIN');
 
+            // Основная таблица пользователей
             await client.query(`
                 CREATE TABLE IF NOT EXISTS users (
                     user_id BIGINT PRIMARY KEY,
@@ -27,10 +28,13 @@ class DatabaseService {
                     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
                     last_used TIMESTAMPTZ,
                     pending_task_id TEXT,
-                    accepted_rules BOOLEAN DEFAULT FALSE
+                    accepted_rules BOOLEAN DEFAULT FALSE,
+                    referrer_id BIGINT REFERENCES users(user_id),
+                    referral_earnings DECIMAL DEFAULT 0
                 );
             `);
 
+            // Таблица платежей
             await client.query(`
                 CREATE TABLE IF NOT EXISTS payments (
                     id SERIAL PRIMARY KEY,
@@ -46,6 +50,19 @@ class DatabaseService {
                 );
             `);
 
+            // Таблица реферальных транзакций
+            await client.query(`
+                CREATE TABLE IF NOT EXISTS referral_transactions (
+                    id SERIAL PRIMARY KEY,
+                    referrer_id BIGINT REFERENCES users(user_id),
+                    referral_id BIGINT REFERENCES users(user_id),
+                    amount DECIMAL,
+                    payment_id INTEGER REFERENCES payments(id),
+                    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+                );
+            `);
+
+            // Таблица рассылок
             await client.query(`
                 CREATE TABLE IF NOT EXISTS scheduled_broadcasts (
                     id TEXT PRIMARY KEY,
@@ -65,6 +82,7 @@ class DatabaseService {
         }
     }
 
+    // Методы для работы с пользователями
     async addUser(userId: number, username?: string): Promise<void> {
         await this.pool.query(
             'INSERT INTO users (user_id, username, credits, accepted_rules) VALUES ($1, $2, 0, FALSE) ON CONFLICT (user_id) DO NOTHING',
@@ -117,6 +135,83 @@ class DatabaseService {
         return result.rows[0] || null;
     }
 
+    // Методы для работы с рефералами
+    async addReferral(userId: number, referrerId: number): Promise<void> {
+        await this.pool.query(
+            'UPDATE users SET referrer_id = $1 WHERE user_id = $2 AND referrer_id IS NULL',
+            [referrerId, userId]
+        );
+    }
+
+    async getReferralStats(userId: number): Promise<{ count: number; earnings: number }> {
+        const result = await this.pool.query(
+            'SELECT COUNT(*) as count, COALESCE(SUM(referral_earnings), 0) as earnings FROM users WHERE referrer_id = $1',
+            [userId]
+        );
+        return {
+            count: parseInt(result.rows[0].count),
+            earnings: parseFloat(result.rows[0].earnings)
+        };
+    }
+
+    async processReferralPayment(paymentId: number): Promise<void> {
+        const client = await this.pool.connect();
+        try {
+            await client.query('BEGIN');
+
+            const payment = await client.query(
+                'SELECT user_id, amount FROM payments WHERE id = $1 AND status = \'paid\'',
+                [paymentId]
+            );
+
+            if (payment.rows.length > 0) {
+                const referral = await client.query(
+                    'SELECT referrer_id FROM users WHERE user_id = $1',
+                    [payment.rows[0].user_id]
+                );
+
+                if (referral.rows[0]?.referrer_id) {
+                    const referralAmount = payment.rows[0].amount * 0.5; // 50% от оплаты
+                    
+                    // Начисляем бонус рефереру
+                    await client.query(
+                        'UPDATE users SET referral_earnings = referral_earnings + $1 WHERE user_id = $2',
+                        [referralAmount, referral.rows[0].referrer_id]
+                    );
+
+                    // Записываем транзакцию
+                    await client.query(
+                        'INSERT INTO referral_transactions (referrer_id, referral_id, amount, payment_id) VALUES ($1, $2, $3, $4)',
+                        [referral.rows[0].referrer_id, payment.rows[0].user_id, referralAmount, paymentId]
+                    );
+                }
+            }
+
+            await client.query('COMMIT');
+        } catch (error) {
+            await client.query('ROLLBACK');
+            throw error;
+        } finally {
+            client.release();
+        }
+    }
+
+    async getRecentReferralTransactions(userId: number, limit: number = 5): Promise<any[]> {
+        const result = await this.pool.query(
+            `SELECT 
+                u.username,
+                rt.amount,
+                rt.created_at
+            FROM referral_transactions rt
+            JOIN users u ON u.user_id = rt.referral_id
+            WHERE rt.referrer_id = $1
+            ORDER BY rt.created_at DESC
+            LIMIT $2`,
+            [userId, limit]
+        );
+        return result.rows;
+    }
+
     // Методы для работы с платежами
     async createPayment(
         userId: number, 
@@ -154,19 +249,17 @@ class DatabaseService {
         );
     }
 
-    // Методы для рассылок
+    // Методы для работы с рассылками
     async getScheduledBroadcasts() {
         const result = await this.pool.query(`
             SELECT * FROM scheduled_broadcasts 
             WHERE scheduled_time > NOW()
+            ORDER BY scheduled_time ASC
         `);
         return result.rows;
     }
 
-    async close(): Promise<void> {
-        await this.pool.end();
-    }
-
+    // Методы для статистики
     async getStats() {
         const [totalUsers, activeToday, creditsStats] = await Promise.all([
             this.pool.query('SELECT COUNT(*) FROM users WHERE accepted_rules = TRUE'),
@@ -191,6 +284,10 @@ class DatabaseService {
             activeToday: parseInt(activeToday.rows[0].count),
             creditsStats: creditsStats.rows[0]
         };
+    }
+
+    async close(): Promise<void> {
+        await this.pool.end();
     }
 }
 
