@@ -1,13 +1,13 @@
 import { Context } from 'telegraf';
-import { db } from '../services/database';
-import { sendMessageWithImage } from '../utils/messages';
-import { getMainKeyboard, getInitialKeyboard, getPaymentKeyboard } from '../utils/keyboard';
-import { MESSAGES } from '../utils/messages';
-import { PATHS } from '../config/environment';
-import { isAdmin } from '../middlewares/auth';
-import * as commandHandlers from './commands';
-import * as adminHandlers from './admin';
+import { SupportedCurrency } from '../types/interfaces';
 import { paymentService } from '../services/payment';
+import { sendMessageWithImage } from '../utils/messages';
+import { PATHS } from '../config/environment';
+import { getMainKeyboard, getInitialKeyboard, getAdminKeyboard } from '../utils/keyboard';
+import { db } from '../services/database';
+import { MESSAGES } from '../utils/messages';
+import { isAdmin } from '../middlewares/auth';
+import * as adminHandlers from './admin';
 
 export async function handleCallbacks(ctx: Context) {
     if (!ctx.callbackQuery || !('data' in ctx.callbackQuery)) {
@@ -20,7 +20,7 @@ export async function handleCallbacks(ctx: Context) {
     if (!userId) return;
 
     try {
-        await ctx.answerCbQuery(); // Убираем "часики" с кнопки
+        await ctx.answerCbQuery();
 
         switch (action) {
             case 'action_buy':
@@ -28,7 +28,17 @@ export async function handleCallbacks(ctx: Context) {
                     ctx,
                     PATHS.ASSETS.PAYMENT,
                     '💳 Выберите способ оплаты:',
-                    getPaymentKeyboard()
+                    {
+                        reply_markup: {
+                            inline_keyboard: [
+                                [{ text: '💳 Visa/MC (RUB)', callback_data: 'currency_RUB' }],
+                                [{ text: '💳 Visa/MC (KZT)', callback_data: 'currency_KZT' }],
+                                [{ text: '💳 Visa/MC (UZS)', callback_data: 'currency_UZS' }],
+                                [{ text: '💎 Криптовалюта', callback_data: 'currency_CRYPTO' }],
+                                [{ text: '◀️ Назад в меню', callback_data: 'action_back' }]
+                            ]
+                        }
+                    }
                 );
                 break;
 
@@ -107,7 +117,6 @@ export async function handleCallbacks(ctx: Context) {
                 );
                 break;
 
-            // Админские действия
             case 'admin_broadcast':
                 if (await isAdmin(userId.toString())) {
                     await adminHandlers.handleBroadcastCommand(ctx);
@@ -132,26 +141,21 @@ export async function handleCallbacks(ctx: Context) {
                 }
                 break;
 
-            // Обработка валют и платежей
-            case action.match(/^currency_(.+)/)?.input:
-                const currency = action.split('_')[1];
-                if (!await handleCurrencySelection(ctx, userId, currency)) {
-                    await sendMessageWithImage(
-                        ctx,
-                        PATHS.ASSETS.PAYMENT,
-                        '❌ Неподдерживаемая валюта',
-                        getPaymentKeyboard()
-                    );
-                }
-                break;
-
-            case action.match(/^buy_(\d+)_(.+)/)?.input:
-                const [_, packageId, curr] = action.split('_');
-                await handlePackageSelection(ctx, userId, parseInt(packageId), curr);
-                break;
-
             default:
-                console.log('Неизвестное действие:', action);
+                if (action.startsWith('currency_')) {
+                    const currency = action.split('_')[1] as SupportedCurrency;
+                    await handleCurrencySelection(ctx, userId, currency);
+                } else if (action.startsWith('buy_')) {
+                    const [_, packageId, currency] = action.split('_');
+                    await handlePackageSelection(
+                        ctx,
+                        userId,
+                        parseInt(packageId),
+                        currency as SupportedCurrency
+                    );
+                } else {
+                    console.log('Неизвестное действие:', action);
+                }
         }
     } catch (error) {
         console.error('Ошибка при обработке callback:', error);
@@ -159,24 +163,30 @@ export async function handleCallbacks(ctx: Context) {
     }
 }
 
-async function handleCurrencySelection(ctx: Context, userId: number, currency: string): Promise<boolean> {
+async function handleCurrencySelection(ctx: Context, userId: number, currency: SupportedCurrency): Promise<boolean> {
     try {
-        const packages = paymentService.getAvailablePackages(currency as any);
+        const packages = paymentService.getAvailablePackages(currency);
         if (packages.length === 0) return false;
 
-        const buttons = packages.map(pkg => ([
-            Markup.button.callback(
-                `${pkg.description} - ${pkg.prices[currency as any]} ${currency}`,
-                `buy_${pkg.id}_${currency}`
-            )
-        ]));
-        buttons.push([Markup.button.callback('◀️ Назад', 'action_back')]);
+        const buttons = packages.map(pkg => ([{
+            text: `${pkg.description} - ${pkg.prices[currency]} ${currency}`,
+            callback_data: `buy_${pkg.id}_${currency}`
+        }]));
+        
+        buttons.push([{
+            text: '◀️ Назад',
+            callback_data: 'action_back'
+        }]);
 
         await sendMessageWithImage(
             ctx,
             PATHS.ASSETS.PAYMENT,
             `💳 Выберите пакет кредитов (цены в ${currency}):`,
-            { reply_markup: Markup.inlineKeyboard(buttons) }
+            { 
+                reply_markup: {
+                    inline_keyboard: buttons
+                }
+            }
         );
         return true;
     } catch (error) {
@@ -185,10 +195,10 @@ async function handleCurrencySelection(ctx: Context, userId: number, currency: s
     }
 }
 
-async function handlePackageSelection(ctx: Context, userId: number, packageId: number, currency: string) {
+async function handlePackageSelection(ctx: Context, userId: number, packageId: number, currency: SupportedCurrency) {
     try {
-        const paymentUrl = await paymentService.createPayment(userId, packageId, currency as any);
-        const package_ = paymentService.getAvailablePackages(currency as any).find(p => p.id === packageId);
+        const paymentUrl = await paymentService.createPayment(userId, packageId, currency);
+        const package_ = paymentService.getAvailablePackages(currency).find(p => p.id === packageId);
 
         await sendMessageWithImage(
             ctx,
@@ -196,10 +206,18 @@ async function handlePackageSelection(ctx: Context, userId: number, packageId: n
             `🔄 Для оплаты ${package_?.description} перейдите по кнопке ниже.\n\n` +
             'После оплаты кредиты будут автоматически зачислены на ваш счет.',
             {
-                reply_markup: Markup.inlineKeyboard([
-                    [Markup.button.url('💳 Перейти к оплате', paymentUrl)],
-                    [Markup.button.callback('◀️ Назад к выбору пакета', `currency_${currency}`)]
-                ])
+                reply_markup: {
+                    inline_keyboard: [
+                        [{
+                            text: '💳 Перейти к оплате',
+                            url: paymentUrl
+                        }],
+                        [{
+                            text: '◀️ Назад к выбору пакета',
+                            callback_data: `currency_${currency}`
+                        }]
+                    ]
+                }
             }
         );
     } catch (error) {

@@ -2,7 +2,6 @@ import { Context } from 'telegraf';
 import { isAdmin } from '../middlewares/auth';
 import { broadcastService } from '../services/broadcast';
 import { db } from '../services/database';
-import { getAdminKeyboard } from '../utils/keyboard';
 import { sendMessageWithImage } from '../utils/messages';
 import { PATHS } from '../config/environment';
 
@@ -14,7 +13,21 @@ export async function handleAdminCommand(ctx: Context): Promise<void> {
     await ctx.reply(
         '👨‍💼 Панель администратора\n\n' +
         'Выберите действие:',
-        getAdminKeyboard()
+        {
+            reply_markup: {
+                inline_keyboard: [
+                    [
+                        { text: '📢 Рассылка', callback_data: 'admin_broadcast' },
+                        { text: '🕒 Отложенная рассылка', callback_data: 'admin_schedule' }
+                    ],
+                    [
+                        { text: '📊 Статистика', callback_data: 'admin_stats' },
+                        { text: '❌ Отменить рассылку', callback_data: 'admin_cancel_broadcast' }
+                    ],
+                    [{ text: '◀️ Назад', callback_data: 'action_back' }]
+                ]
+            }
+        }
     );
 }
 
@@ -29,11 +42,10 @@ export async function handleBroadcastCommand(ctx: Context): Promise<void> {
         'Для отмены нажмите "Отменить рассылку"',
         {
             reply_markup: {
-                keyboard: [
-                    ['❌ Отменить рассылку'],
-                    ['◀️ Назад']
-                ],
-                resize_keyboard: true
+                inline_keyboard: [
+                    [{ text: '❌ Отменить рассылку', callback_data: 'admin_cancel_broadcast' }],
+                    [{ text: '◀️ Назад', callback_data: 'action_back' }]
+                ]
             }
         }
     );
@@ -49,11 +61,10 @@ export async function handleScheduleCommand(ctx: Context): Promise<void> {
         'Например: 25.12.2024 15:30',
         {
             reply_markup: {
-                keyboard: [
-                    ['❌ Отменить рассылку'],
-                    ['◀️ Назад']
-                ],
-                resize_keyboard: true
+                inline_keyboard: [
+                    [{ text: '❌ Отменить рассылку', callback_data: 'admin_cancel_broadcast' }],
+                    [{ text: '◀️ Назад', callback_data: 'action_back' }]
+                ]
             }
         }
     );
@@ -65,7 +76,13 @@ export async function handleCancelBroadcast(ctx: Context): Promise<void> {
     broadcastService.clearAwaiting(ctx.from.id);
     await ctx.reply(
         '❌ Рассылка отменена',
-        getAdminKeyboard()
+        {
+            reply_markup: {
+                inline_keyboard: [
+                    [{ text: '◀️ Вернуться в админ панель', callback_data: 'admin_back' }]
+                ]
+            }
+        }
     );
 }
 
@@ -86,10 +103,91 @@ export async function handleStats(ctx: Context): Promise<void> {
             `• Среднее на пользователя: ${Math.round(stats.creditsStats.avg_credits || 0)}\n` +
             `• Максимум у пользователя: ${stats.creditsStats.max_credits || 0}\n\n` +
             `📩 Запланированных рассылок: ${broadcastService.getScheduledBroadcastsCount()}`,
-            getAdminKeyboard()
+            {
+                reply_markup: {
+                    inline_keyboard: [
+                        [
+                            { text: '🔄 Обновить', callback_data: 'admin_stats_refresh' },
+                            { text: '◀️ Назад', callback_data: 'action_back' }
+                        ]
+                    ]
+                }
+            }
         );
     } catch (error) {
         console.error('Ошибка при получении статистики:', error);
         await ctx.reply('❌ Произошла ошибка при получении статистики');
+    }
+}
+
+export async function handleBroadcastMessage(ctx: Context, text: string, imageBuffer?: Buffer): Promise<void> {
+    if (!ctx.from || !await isAdmin(ctx.from.id.toString())) return;
+
+    try {
+        let imagePath: string | undefined;
+        if (imageBuffer) {
+            imagePath = await broadcastService.saveTempImage(imageBuffer, ctx.from.id);
+        }
+
+        const result = await broadcastService.broadcast(text, imagePath);
+        
+        if (imagePath) {
+            await broadcastService.deleteTempImage(imagePath);
+        }
+
+        await ctx.reply(
+            `✅ Рассылка завершена!\n\n` +
+            `Успешно: ${result.success}\n` +
+            `Ошибок: ${result.failed}`,
+            {
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: '◀️ Вернуться в админ панель', callback_data: 'action_back' }]
+                    ]
+                }
+            }
+        );
+    } catch (error) {
+        console.error('Ошибка при выполнении рассылки:', error);
+        await ctx.reply('❌ Произошла ошибка при выполнении рассылки');
+    }
+}
+
+export async function handleScheduledBroadcast(
+    ctx: Context,
+    date: Date,
+    text: string,
+    imageBuffer?: Buffer
+): Promise<void> {
+    if (!ctx.from || !await isAdmin(ctx.from.id.toString())) return;
+
+    try {
+        let imagePath: string | undefined;
+        if (imageBuffer) {
+            imagePath = await broadcastService.saveTempImage(imageBuffer, ctx.from.id, true);
+        }
+
+        const broadcastId = await broadcastService.scheduleBroadcast({
+            date,
+            message: text,
+            image: imagePath,
+            id: `scheduled_${Date.now()}`
+        });
+
+        await ctx.reply(
+            `✅ Рассылка запланирована!\n\n` +
+            `Дата: ${date.toLocaleString()}\n` +
+            `ID рассылки: ${broadcastId}`,
+            {
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: '◀️ Вернуться в админ панель', callback_data: 'action_back' }]
+                    ]
+                }
+            }
+        );
+    } catch (error) {
+        console.error('Ошибка при планировании рассылки:', error);
+        await ctx.reply('❌ Произошла ошибка при планировании рассылки');
     }
 }

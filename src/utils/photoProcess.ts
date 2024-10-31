@@ -1,15 +1,19 @@
 import { Context } from 'telegraf';
+import { Message } from 'telegraf/typings/core/types/typegram';
 import { db } from '../services/database';
 import { imageProcessor } from '../services/imageProcess';
 import { sendMessageWithImage } from './messages';
 import { getMainKeyboard } from './keyboard';
 import { PATHS } from '../config/environment';
 import { MESSAGES } from './messages';
-import { Message } from 'telegraf/typings/core/types/typegram';
 
 export async function processPhotoMessage(ctx: Context): Promise<void> {
-    const msg = ctx.message as Message.PhotoMessage;
-    if (!msg || !ctx.from) {
+    if (!('message' in ctx.update) || !ctx.update.message || !('photo' in ctx.update.message)) {
+        return;
+    }
+
+    const msg = ctx.update.message;
+    if (!ctx.from || !ctx.chat) {
         return;
     }
 
@@ -44,29 +48,28 @@ export async function processPhotoMessage(ctx: Context): Promise<void> {
         const photo = msg.photo[msg.photo.length - 1];
         const imageBuffer = await imageProcessor.downloadTelegramFile(photo.file_id, ctx.telegram);
 
-        if (!await imageProcessor.isAdultContent()) {
-            throw new Error('AGE_RESTRICTION');
-        }
+        try {
+            const result = await imageProcessor.processImage(imageBuffer, userId);
 
-        console.log('Отправка изображения на обработку...');
-        const result = await imageProcessor.processImage(imageBuffer, userId);
+            if (result.idGen) {
+                await db.updateUserCredits(userId, -1);
+                await sendMessageWithImage(
+                    ctx,
+                    PATHS.ASSETS.PAYMENT_PROCESS,
+                    '✅ Изображение принято на обработку:\n' +
+                    `🕒 Время в очереди: ${result.queueTime} сек\n` +
+                    `📊 Позиция в очереди: ${result.queueNum}\n` +
+                    `🔄 ID задачи: ${result.idGen}\n\n` +
+                    'Результат будет отправлен, когда обработка завершится.',
+                    getMainKeyboard()
+                );
+            }
 
-        if (result.idGen) {
-            await db.updateUserCredits(userId, -1);
-            await sendMessageWithImage(
-                ctx,
-                PATHS.ASSETS.PAYMENT_PROCESS,
-                '✅ Изображение принято на обработку:\n' +
-                `🕒 Время в очереди: ${result.queueTime} сек\n` +
-                `📊 Позиция в очереди: ${result.queueNum}\n` +
-                `🔄 ID задачи: ${result.idGen}\n\n` +
-                'Результат будет отправлен, когда обработка завершится.',
-                getMainKeyboard()
-            );
-        }
-
-        if (processingMsg) {
-            await ctx.telegram.deleteMessage(ctx.chat.id, processingMsg.message_id).catch(() => {});
+            if (processingMsg?.message_id) {
+                await ctx.telegram.deleteMessage(ctx.chat.id, processingMsg.message_id).catch(() => {});
+            }
+        } catch (error) {
+            throw error;
         }
 
     } catch (error) {
@@ -91,7 +94,7 @@ export async function processPhotoMessage(ctx: Context): Promise<void> {
             getMainKeyboard()
         );
 
-        if (processingMsg) {
+        if (processingMsg?.message_id) {
             await ctx.telegram.deleteMessage(ctx.chat.id, processingMsg.message_id).catch(() => {});
         }
     }
