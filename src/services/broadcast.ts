@@ -36,18 +36,24 @@ class BroadcastService {
         delete this.broadcastImage[userId];
     }
 
-    async setBroadcastImage(userId: number, image: Buffer): Promise<string> {
-        const tempPath = path.join(__dirname, `../../temp_broadcast_${userId}.jpg`);
-        await fs.writeFile(tempPath, image);
-        this.broadcastImage[userId] = tempPath;
-        return tempPath;
+    async saveTempImage(imageBuffer: Buffer, userId: number, keepFile: boolean = false): Promise<string> {
+        const tempDir = path.join(__dirname, '../../temp');
+        await fs.mkdir(tempDir, { recursive: true });
+        
+        const filename = keepFile ? 
+            `broadcast_${Date.now()}.jpg` : 
+            `temp_broadcast_${userId}.jpg`;
+        const filePath = path.join(tempDir, filename);
+        
+        await fs.writeFile(filePath, imageBuffer);
+        return filePath;
     }
 
-    async removeBroadcastImage(userId: number): Promise<void> {
-        const imagePath = this.broadcastImage[userId];
-        if (imagePath) {
-            await fs.unlink(imagePath).catch(console.error);
-            delete this.broadcastImage[userId];
+    async deleteTempImage(imagePath: string): Promise<void> {
+        try {
+            await fs.unlink(imagePath);
+        } catch (error) {
+            console.error('Ошибка при удалении временного файла:', error);
         }
     }
 
@@ -115,7 +121,7 @@ class BroadcastService {
         return { success: successCount, failed: failedCount };
     }
 
-    scheduleBroadcast(broadcast: ScheduledBroadcast): string {
+    async scheduleBroadcast(broadcast: ScheduledBroadcast): Promise<string> {
         const job = scheduleJob(broadcast.date, async () => {
             try {
                 await this.broadcast(broadcast.message, broadcast.image, broadcast.keyboard);
@@ -132,6 +138,11 @@ class BroadcastService {
                     } catch (error) {
                         console.error('Ошибка уведомления админа:', error);
                     }
+                }
+
+                // Удаляем временный файл изображения, если он есть
+                if (broadcast.image) {
+                    await this.deleteTempImage(broadcast.image);
                 }
             } catch (error) {
                 console.error('Ошибка выполнения отложенной рассылки:', error);
@@ -150,7 +161,7 @@ class BroadcastService {
         const broadcasts = await db.getScheduledBroadcasts();
         for (const broadcast of broadcasts) {
             if (broadcast.date > new Date()) {
-                this.scheduleBroadcast(broadcast);
+                await this.scheduleBroadcast(broadcast);
             }
         }
     }
