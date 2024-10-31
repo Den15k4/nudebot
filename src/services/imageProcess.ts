@@ -58,10 +58,7 @@ const response = await this.apiClient.post('/undress', formData, {
         }
     }
 
-    async isAdultContent(): Promise<boolean> {
-        // Здесь можно добавить реальную проверку возраста
-        return true;
-    }
+    
 
     async downloadTelegramFile(fileId: string, bot: any): Promise<Buffer> {
         const file = await bot.telegram.getFile(fileId);

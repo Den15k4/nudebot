@@ -21,7 +21,7 @@ import { initBroadcastService, broadcastService } from './services/broadcast';
 import { initPaymentService, paymentService } from './services/payment';
 
 // Utils
-import { processPhotoMessage } from './utils/photoProcessor';
+//import { processPhotoMessage } from './utils/photoProcessor';
 
 // Инициализация бота
 export const bot = new Telegraf(ENV.BOT_TOKEN);
