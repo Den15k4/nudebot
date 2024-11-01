@@ -144,10 +144,22 @@ class DatabaseService {
 
     // Методы для работы с пользователями
     async addUser(userId: number, username?: string): Promise<void> {
-        await this.pool.query(
-            'INSERT INTO users (user_id, username, credits, accepted_rules) VALUES ($1, $2, 0, FALSE) ON CONFLICT (user_id) DO NOTHING',
-            [userId, username || 'anonymous']
-        );
+        try {
+            const result = await this.pool.query(
+                `INSERT INTO users 
+                (user_id, username, credits, accepted_rules) 
+                VALUES ($1, $2, 0, FALSE) 
+                ON CONFLICT (user_id) 
+                DO UPDATE SET username = EXCLUDED.username 
+                RETURNING *`,
+                [userId, username || 'anonymous']
+            );
+            
+            console.log('User added/updated:', result.rows[0]);
+        } catch (error) {
+            console.error('Error adding user:', error);
+            throw error;
+        }
     }
 
     async hasAcceptedRules(userId: number): Promise<boolean> {
@@ -157,22 +169,25 @@ class DatabaseService {
         );
         return result.rows[0]?.accepted_rules || false;
     }
-    async updateAcceptedRules(userId: number): Promise<void> {
-        const client = await this.pool.connect();
-        try {
-            await client.query('BEGIN');
     
-            await client.query(
-                'UPDATE users SET accepted_rules = true, updated_at = CURRENT_TIMESTAMP WHERE user_id = $1',
+    async updateAcceptedRules(userId: number): Promise<void> {
+        try {
+            console.log(`Attempting to update rules acceptance for user ${userId}`);
+            
+            await this.pool.query(
+                'UPDATE users SET accepted_rules = true WHERE user_id = $1',
                 [userId]
             );
     
-            await client.query('COMMIT');
+            const result = await this.pool.query(
+                'SELECT accepted_rules FROM users WHERE user_id = $1',
+                [userId]
+            );
+            
+            console.log(`Rules acceptance update result:`, result.rows[0]);
         } catch (error) {
-            await client.query('ROLLBACK');
+            console.error('Error updating rules acceptance:', error);
             throw error;
-        } finally {
-            client.release();
         }
     }
 

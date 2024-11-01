@@ -1,5 +1,5 @@
 import { Context } from 'telegraf';
-import { SupportedCurrency, ReferralTransaction } from '../types/interfaces';
+import { SupportedCurrency, DetailedStats } from '../types/interfaces';
 import { paymentService } from '../services/payment';
 import { sendMessageWithImage } from '../utils/messages';
 import { PATHS } from '../config/environment';
@@ -16,12 +16,9 @@ import { db } from '../services/database';
 import { MESSAGES } from '../utils/messages';
 import { isAdmin } from '../middlewares/auth';
 import * as adminHandlers from './admin';
-import { backupService } from '../services/backup';
 import { StatsExporter } from '../services/stats';
 import { ChartGenerator } from '../services/stats';
-import { DetailedStats } from '../types/interfaces';
 
-// Главная функция обработки callback'ов
 export async function handleCallbacks(ctx: Context): Promise<void> {
     if (!ctx.callbackQuery || !('data' in ctx.callbackQuery)) {
         return;
@@ -41,7 +38,6 @@ export async function handleCallbacks(ctx: Context): Promise<void> {
             return;
         }
 
-        // Пользовательские действия
         switch (action) {
             case 'action_process_photo':
                 const userCredits = await db.checkCredits(userId);
@@ -92,7 +88,8 @@ export async function handleCallbacks(ctx: Context): Promise<void> {
                     }
                 );
                 break;
-                case 'action_balance':
+
+            case 'action_balance':
                 const credits = await db.checkCredits(userId);
                 const stats = await db.getUserPhotoStats(userId);
                 await sendMessageWithImage(
@@ -165,7 +162,8 @@ export async function handleCallbacks(ctx: Context): Promise<void> {
                     getMainKeyboard()
                 );
                 break;
-                case 'action_back':
+
+            case 'action_back':
                 const accepted = await db.hasAcceptedRules(userId);
                 if (!accepted) {
                     await sendMessageWithImage(
@@ -193,20 +191,36 @@ export async function handleCallbacks(ctx: Context): Promise<void> {
                 );
                 break;
 
-                case 'action_accept_rules':
-                    try {
-                        await db.updateAcceptedRules(userId);
+            case 'action_accept_rules':
+                try {
+                    console.log(`Processing rules acceptance for user ${userId}`);
+
+                    await db.updateAcceptedRules(userId);
+                    console.log(`Rules updated in database for user ${userId}`);
+
+                    // Проверим статус после обновления
+                    const accepted = await db.hasAcceptedRules(userId);
+                    console.log(`Current rules acceptance status for user ${userId}: ${accepted}`);
+
+                    if (accepted) {
                         await sendMessageWithImage(
                             ctx,
                             PATHS.ASSETS.WELCOME,
                             MESSAGES.RULES_ACCEPTED,
                             getMainKeyboard()
                         );
-                    } catch (error) {
-                        console.error('Ошибка при принятии правил:', error);
-                        await ctx.reply('❌ Произошла ошибка. Попробуйте позже.');
+                        console.log(`Welcome message sent to user ${userId}`);
+                    } else {
+                        console.log(`Failed to update rules acceptance for user ${userId}`);
+                        throw new Error('Failed to update rules acceptance');
                     }
-                    break;
+                } catch (error) {
+                    console.error('Error in rules acceptance:', error);
+                    await ctx.reply(
+                        '❌ Произошла ошибка при принятии правил. Попробуйте еще раз или обратитесь в поддержку.'
+                    );
+                }
+                break;
 
             default:
                 if (action.startsWith('currency_')) {
@@ -228,7 +242,9 @@ export async function handleCallbacks(ctx: Context): Promise<void> {
         console.error('Ошибка при обработке callback:', error);
         await ctx.reply('❌ Произошла ошибка. Попробуйте позже.');
     }
-}// Вспомогательные функции
+}
+
+// Вспомогательные функции
 async function handleCurrencySelection(ctx: Context, userId: number, currency: SupportedCurrency): Promise<boolean> {
     try {
         const packages = paymentService.getAvailablePackages(currency);
@@ -332,8 +348,7 @@ async function handlePackageSelection(ctx: Context, userId: number, packageId: n
     }
 }
 
-// Функции для админ-панели
-// Обработчик админ-callback'ов
+// Админ функции
 async function handleAdminCallbacks(ctx: Context, action: string): Promise<void> {
     try {
         switch (action) {
@@ -389,49 +404,12 @@ async function handleAdminCallbacks(ctx: Context, action: string): Promise<void>
                 await adminHandlers.handleCreateSpecialOffer(ctx);
                 break;
 
-            case 'admin_edit_offers':
-                const activeOffers = await db.getActiveSpecialOffers();
-                if (activeOffers.length === 0) {
-                    await ctx.reply('❌ Нет активных акций для редактирования');
-                    return;
-                }
-
-                const buttons = activeOffers.map(offer => ([{
-                    text: offer.title,
-                    callback_data: `admin_edit_offer_${offer.id}`
-                }]));
-                buttons.push([{ text: '◀️ Назад', callback_data: 'admin_special_offers' }]);
-
-                await ctx.reply(
-                    '📝 Выберите акцию для редактирования:',
-                    { reply_markup: { inline_keyboard: buttons } }
-                );
-                break;
-
             case 'admin_backups':
                 await adminHandlers.handleBackups(ctx);
                 break;
 
             case 'admin_create_backup':
                 await adminHandlers.handleCreateBackup(ctx);
-                break;
-
-            case 'admin_backup_schedule':
-                await ctx.reply(
-                    '⚙️ Настройка расписания бэкапов\n\n' +
-                    'Текущее расписание: каждый день в 03:00\n\n' +
-                    'Выберите новое расписание:',
-                    {
-                        reply_markup: {
-                            inline_keyboard: [
-                                [{ text: 'Каждый день', callback_data: 'admin_backup_schedule_daily' }],
-                                [{ text: 'Каждую неделю', callback_data: 'admin_backup_schedule_weekly' }],
-                                [{ text: 'Каждый месяц', callback_data: 'admin_backup_schedule_monthly' }],
-                                [{ text: '◀️ Назад', callback_data: 'admin_backups' }]
-                            ]
-                        }
-                    }
-                );
                 break;
 
             case 'admin_broadcast':
@@ -443,27 +421,6 @@ async function handleAdminCallbacks(ctx: Context, action: string): Promise<void>
 
             case 'admin_broadcast_all':
                 await adminHandlers.handleBroadcastCommand(ctx);
-                break;
-
-            case 'admin_broadcast_select':
-                await ctx.reply(
-                    '🎯 Выберите группу пользователей:',
-                    {
-                        reply_markup: {
-                            inline_keyboard: [
-                                [
-                                    { text: '💳 С балансом > 0', callback_data: 'admin_broadcast_with_credits' },
-                                    { text: '🆕 Новые пользователи', callback_data: 'admin_broadcast_new_users' }
-                                ],
-                                [
-                                    { text: '💰 Совершившие платежи', callback_data: 'admin_broadcast_paid_users' },
-                                    { text: '📸 Активные', callback_data: 'admin_broadcast_active_users' }
-                                ],
-                                [{ text: '◀️ Назад', callback_data: 'admin_broadcast' }]
-                            ]
-                        }
-                    }
-                );
                 break;
 
             case 'admin_stats_refresh':
@@ -490,13 +447,8 @@ async function handleAdminCallbacks(ctx: Context, action: string): Promise<void>
                     const offerId = parseInt(action.split('_')[3]);
                     await handleOfferEdit(ctx, offerId);
                 }
-                else if (action.startsWith('admin_broadcast_')) {
-                    const targetGroup = action.split('_')[2];
-                    await handleTargetedBroadcast(ctx, targetGroup);
-                }
-                else if (action.startsWith('admin_graph_')) {
-                    const chartType = action.split('_')[2];
-                    await handleChartGeneration(ctx, chartType);
+                else {
+                    console.log('Неизвестное админ-действие:', action);
                 }
         }
     } catch (error) {
@@ -520,8 +472,10 @@ async function handleStatsExport(ctx: Context, format: string): Promise<void> {
     try {
         const exporter = new StatsExporter();
         const file = await exporter.exportStats(format);
-        const fileName = `stats_${new Date().toISOString()}.${format}`;
-        await ctx.replyWithDocument({ source: file, filename: fileName });
+        await ctx.replyWithDocument({ 
+            source: file, 
+            filename: `stats_${new Date().toISOString()}.${format}` 
+        });
     } catch (error) {
         console.error('Ошибка при экспорте статистики:', error);
         await ctx.reply('❌ Произошла ошибка при экспорте статистики');
@@ -536,6 +490,21 @@ async function handleOfferDeactivation(ctx: Context, offerId: number): Promise<v
     } catch (error) {
         console.error('Ошибка при деактивации акции:', error);
         await ctx.reply('❌ Произошла ошибка при деактивации акции');
+    }
+}
+
+async function handleBackupRestore(ctx: Context, backupId: number): Promise<void> {
+    try {
+        const backups = await db.getBackupHistory();
+        const backup = backups.find(b => b.id === backupId);
+        if (backup) {
+            await ctx.reply('🔄 Начинаю восстановление из бэкапа...');
+            await adminHandlers.handleBackupRestore(ctx, backup.filename);
+            await ctx.reply('✅ Восстановление успешно завершено');
+        }
+    } catch (error) {
+        console.error('Ошибка при восстановлении из бэкапа:', error);
+        await ctx.reply('❌ Произошла ошибка при восстановлении');
     }
 }
 
@@ -570,71 +539,6 @@ async function handleOfferEdit(ctx: Context, offerId: number): Promise<void> {
     } catch (error) {
         console.error('Ошибка при редактировании акции:', error);
         await ctx.reply('❌ Произошла ошибка при редактировании акции');
-    }
-}
-
-async function handleBackupRestore(ctx: Context, backupId: number): Promise<void> {
-    try {
-        const backups = await db.getBackupHistory();
-        const backup = backups.find(b => b.id === backupId);
-        if (backup) {
-            await ctx.reply('🔄 Начинаю восстановление из бэкапа...');
-            await backupService.restoreFromBackup(backup.filename);
-            await ctx.reply('✅ Восстановление успешно завершено');
-        }
-    } catch (error) {
-        console.error('Ошибка при восстановлении из бэкапа:', error);
-        await ctx.reply('❌ Произошла ошибка при восстановлении');
-    }
-}
-async function handleChartGeneration(ctx: Context, chartType: string): Promise<void> {
-    try {
-        const chartGenerator = new ChartGenerator();
-        const chart = await chartGenerator.generateChart(chartType);
-        await ctx.replyWithPhoto({ source: chart });
-    } catch (error) {
-        console.error('Ошибка при генерации графика:', error);
-        await ctx.reply('❌ Произошла ошибка при генерации графика');
-    }
-}
-
-async function handleTargetedBroadcast(ctx: Context, targetGroup: string): Promise<void> {
-    try {
-        let users: number[] = [];
-        switch (targetGroup) {
-            case 'with_credits':
-                users = await db.getUsersWithCredits();
-                break;
-            case 'new_users':
-                users = await db.getNewUsers(24); // последние 24 часа
-                break;
-            case 'paid_users':
-                users = await db.getPaidUsers();
-                break;
-            case 'active_users':
-                users = await db.getActiveUsers(7); // активные за последние 7 дней
-                break;
-        }
-
-        if (users.length === 0) {
-            await ctx.reply('❌ Нет пользователей в выбранной группе');
-            return;
-        }
-
-        await ctx.reply(
-            `✅ Выбрано ${users.length} пользователей\n` +
-            'Отправьте сообщение для рассылки:',
-            {
-                reply_markup: {
-                    inline_keyboard: [
-                        [{ text: '❌ Отмена', callback_data: 'admin_broadcast' }]
-                    ]
-                }
-            }
-        );
-    } catch (error) {
-        console.error('Ошибка при подготовке целевой рассылки:', error);
-        await ctx.reply('❌ Произошла ошибка при подготовке рассылки');
     }
 }
 
