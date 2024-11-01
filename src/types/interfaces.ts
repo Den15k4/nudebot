@@ -50,6 +50,9 @@ export interface User {
     last_used?: Date;
     pending_task_id?: string;
     accepted_rules: boolean;
+    photos_processed: number;
+    total_spent: number;
+    last_notification_read?: Date;
 }
 
 export interface Payment {
@@ -63,6 +66,46 @@ export interface Payment {
     currency: string;
     created_at: Date;
     updated_at: Date;
+}
+
+export interface PhotoStats {
+    photos_processed: number;
+    successful_photos: number;
+    failed_photos: number;
+    avg_processing_time: number;
+}
+
+export interface SpecialOffer {
+    id?: number;
+    title: string;
+    description: string;
+    discountPercent: number;
+    startDate: Date;
+    endDate: Date;
+    isActive?: boolean;
+    minCredits?: number;
+    extraCredits?: number;
+}
+
+export interface Notification {
+    id?: number;
+    type: string;
+    title: string;
+    message: string;
+    scheduledFor?: Date;
+    specialOfferId?: number;
+    isSent?: boolean;
+    sentAt?: Date;
+}
+
+export interface BackupRecord {
+    id?: number;
+    filename: string;
+    createdAt?: Date;
+    sizeBytes: number;
+    status: string;
+    errorMessage?: string;
+    storagePath: string;
 }
 
 export type SupportedCurrency = 'RUB' | 'KZT' | 'UZS' | 'CRYPTO';

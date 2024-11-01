@@ -3,11 +3,23 @@ import { SupportedCurrency } from '../types/interfaces';
 import { paymentService } from '../services/payment';
 import { sendMessageWithImage } from '../utils/messages';
 import { PATHS } from '../config/environment';
-import { getMainKeyboard, getInitialKeyboard, getAdminKeyboard } from '../utils/keyboard';
+import { 
+    getMainKeyboard, 
+    getInitialKeyboard, 
+    getAdminKeyboard,
+    getAdminStatsKeyboard,
+    getSpecialOffersKeyboard,
+    getAdminBackupsKeyboard,
+    getAdminBroadcastKeyboard,
+    getAdminExportStatsKeyboard
+} from '../utils/keyboard';
 import { db } from '../services/database';
 import { MESSAGES } from '../utils/messages';
 import { isAdmin } from '../middlewares/auth';
 import * as adminHandlers from './admin';
+import { backupService } from '../services/backup';
+import { StatsExporter } from '../services/stats/statsExporter';
+import { ChartGenerator } from '../services/stats/chartGenerator';
 
 export async function handleCallbacks(ctx: Context) {
     if (!ctx.callbackQuery || !('data' in ctx.callbackQuery)) {
@@ -22,7 +34,14 @@ export async function handleCallbacks(ctx: Context) {
     try {
         await ctx.answerCbQuery();
 
+        // Админ функции
+        if (action.startsWith('admin_') && await isAdmin(userId.toString())) {
+            await handleAdminCallbacks(ctx, action);
+            return;
+        }
+
         switch (action) {
+            // Основные действия бота
             case 'action_process_photo':
                 const userCredits = await db.checkCredits(userId);
                 if (userCredits <= 0) {
@@ -75,21 +94,27 @@ export async function handleCallbacks(ctx: Context) {
 
             case 'action_balance':
                 const credits = await db.checkCredits(userId);
+                const stats = await db.getUserPhotoStats(userId);
                 await sendMessageWithImage(
                     ctx,
                     PATHS.ASSETS.BALANCE,
-                    `💳 У вас ${credits} кредитов`,
+                    `💳 Ваш баланс: ${credits} кредитов\n\n` +
+                    `📊 Статистика:\n` +
+                    `• Обработано фото: ${stats.photos_processed}\n` +
+                    `• Успешно: ${stats.successful_photos}\n` +
+                    `• Ошибок: ${stats.failed_photos}\n` +
+                    `• Среднее время обработки: ${Math.round(stats.avg_processing_time || 0)}с`,
                     getMainKeyboard()
                 );
                 break;
 
             case 'action_referrals':
-                const stats = await db.getReferralStats(userId);
+                const referralStats = await db.getReferralStats(userId);
                 const transactions = await db.getRecentReferralTransactions(userId);
                 
                 let message = '👥 <b>Ваша реферальная программа:</b>\n\n' +
-                    `🔢 Количество рефералов: ${stats.count}\n` +
-                    `💰 Заработано: ${stats.earnings}₽\n\n` +
+                    `🔢 Количество рефералов: ${referralStats.count}\n` +
+                    `💰 Заработано: ${referralStats.earnings}₽\n\n` +
                     '🔗 Ваша реферальная ссылка:\n' +
                     `https://t.me/${ctx.botInfo?.username}?start=${userId}`;
 
@@ -173,30 +198,6 @@ export async function handleCallbacks(ctx: Context) {
                 );
                 break;
 
-            case 'admin_broadcast':
-                if (await isAdmin(userId.toString())) {
-                    await adminHandlers.handleBroadcastCommand(ctx);
-                }
-                break;
-
-            case 'admin_schedule':
-                if (await isAdmin(userId.toString())) {
-                    await adminHandlers.handleScheduleCommand(ctx);
-                }
-                break;
-
-            case 'admin_stats':
-                if (await isAdmin(userId.toString())) {
-                    await adminHandlers.handleStats(ctx);
-                }
-                break;
-
-            case 'admin_cancel_broadcast':
-                if (await isAdmin(userId.toString())) {
-                    await adminHandlers.handleCancelBroadcast(ctx);
-                }
-                break;
-
             default:
                 if (action.startsWith('currency_')) {
                     const currency = action.split('_')[1] as SupportedCurrency;
@@ -218,16 +219,214 @@ export async function handleCallbacks(ctx: Context) {
         await ctx.reply('❌ Произошла ошибка. Попробуйте позже.');
     }
 }
+// Обработчик админ-callback'ов
+async function handleAdminCallbacks(ctx: Context, action: string): Promise<void> {
+    try {
+        switch (action) {
+            case 'admin_stats':
+                await adminHandlers.handleStats(ctx);
+                break;
 
+            case 'admin_detailed_stats':
+                const stats = await db.getDetailedStats();
+                await ctx.reply(
+                    formatDetailedStats(stats),
+                    getAdminStatsKeyboard()
+                );
+                break;
+
+            case 'admin_stats_graphs':
+                await handleStatsGraphs(ctx);
+                break;
+
+            case 'admin_export_stats':
+                await ctx.reply(
+                    '📊 Выберите формат экспорта:',
+                    getAdminExportStatsKeyboard()
+                );
+                break;
+
+            case 'admin_export_excel':
+            case 'admin_export_csv':
+            case 'admin_export_json':
+            case 'admin_export_pdf':
+                await handleStatsExport(ctx, action.split('_')[2]);
+                break;
+
+            case 'admin_special_offers':
+                await adminHandlers.handleSpecialOffers(ctx);
+                break;
+
+            case 'admin_create_offer':
+                await adminHandlers.handleCreateSpecialOffer(ctx);
+                break;
+
+            case 'admin_backups':
+                await adminHandlers.handleBackups(ctx);
+                break;
+
+            case 'admin_create_backup':
+                await adminHandlers.handleCreateBackup(ctx);
+                break;
+
+            case 'admin_broadcast':
+                await ctx.reply(
+                    '📢 Выберите тип рассылки:',
+                    getAdminBroadcastKeyboard()
+                );
+                break;
+
+            case 'admin_broadcast_all':
+                await adminHandlers.handleBroadcastCommand(ctx);
+                break;
+
+            case 'admin_stats_refresh':
+                await adminHandlers.handleStats(ctx);
+                break;
+
+            case 'admin_back':
+                await ctx.reply(
+                    '👨‍💼 Панель администратора',
+                    getAdminKeyboard()
+                );
+                break;
+
+            default:
+                if (action.startsWith('admin_deactivate_offer_')) {
+                    const offerId = parseInt(action.split('_')[3]);
+                    await handleOfferDeactivation(ctx, offerId);
+                } else if (action.startsWith('admin_restore_backup_')) {
+                    const backupId = parseInt(action.split('_')[3]);
+                    await handleBackupRestore(ctx, backupId);
+                } else if (action.startsWith('admin_graph_')) {
+                    const chartType = action.split('_')[2];
+                    await handleChartGeneration(ctx, chartType);
+                }
+        }
+    } catch (error) {
+        console.error('Ошибка при обработке админ-callback:', error);
+        await ctx.reply('❌ Произошла ошибка при выполнении действия');
+    }
+}
+
+// Вспомогательные функции
+async function handleStatsGraphs(ctx: Context): Promise<void> {
+    try {
+        const chartGenerator = new ChartGenerator();
+        const charts = await chartGenerator.generateDashboard();
+        await ctx.replyWithPhoto({ source: charts });
+    } catch (error) {
+        console.error('Ошибка при генерации графиков:', error);
+        await ctx.reply('❌ Произошла ошибка при генерации графиков');
+    }
+}
+
+async function handleStatsExport(ctx: Context, format: string): Promise<void> {
+    try {
+        const exporter = new StatsExporter();
+        const file = await exporter.exportStats(format);
+        await ctx.replyWithDocument({ source: file, filename: `stats_${new Date().toISOString()}.${format}` });
+    } catch (error) {
+        console.error('Ошибка при экспорте статистики:', error);
+        await ctx.reply('❌ Произошла ошибка при экспорте статистики');
+    }
+}
+
+async function handleOfferDeactivation(ctx: Context, offerId: number): Promise<void> {
+    try {
+        await db.deactivateSpecialOffer(offerId);
+        await ctx.reply('✅ Акция успешно деактивирована');
+        await adminHandlers.handleSpecialOffers(ctx);
+    } catch (error) {
+        console.error('Ошибка при деактивации акции:', error);
+        await ctx.reply('❌ Произошла ошибка при деактивации акции');
+    }
+}
+
+async function handleBackupRestore(ctx: Context, backupId: number): Promise<void> {
+    try {
+        const backups = await db.getBackupHistory();
+        const backup = backups.find(b => b.id === backupId);
+        if (backup) {
+            await ctx.reply('🔄 Начинаю восстановление из бэкапа...');
+            await backupService.restoreFromBackup(backup.filename);
+            await ctx.reply('✅ Восстановление успешно завершено');
+        }
+    } catch (error) {
+        console.error('Ошибка при восстановлении из бэкапа:', error);
+        await ctx.reply('❌ Произошла ошибка при восстановлении');
+    }
+}
+
+async function handleChartGeneration(ctx: Context, chartType: string): Promise<void> {
+    try {
+        const chartGenerator = new ChartGenerator();
+        const chart = await chartGenerator.generateChart(chartType);
+        await ctx.replyWithPhoto({ source: chart });
+    } catch (error) {
+        console.error('Ошибка при генерации графика:', error);
+        await ctx.reply('❌ Произошла ошибка при генерации графика');
+    }
+}
+
+function formatDetailedStats(stats: any): string {
+    return '📊 <b>Подробная статистика:</b>\n\n' +
+        '👥 Пользователи:\n' +
+        `• Всего: ${stats.users.total_users}\n` +
+        `• Активных за 24ч: ${stats.users.active_today}\n` +
+        `• Всего кредитов: ${stats.users.total_credits}\n` +
+        `• Общая выручка: ${stats.users.total_revenue}₽\n\n` +
+        '📸 Обработка фото (за 24ч):\n' +
+        `• Всего: ${stats.photos.total_processed}\n` +
+        `• Успешных: ${stats.photos.successful}\n` +
+        `• Ошибок: ${stats.photos.failed}\n` +
+        `• Среднее время: ${Math.round(stats.photos.avg_processing_time || 0)}с\n\n` +
+        '💰 Платежи (за 24ч):\n' +
+        `• Количество: ${stats.payments.total_payments}\n` +
+        `• Сумма: ${stats.payments.total_amount || 0}₽\n` +
+        `• Уникальных пользователей: ${stats.payments.unique_users}\n\n` +
+        '🎉 Акции:\n' +
+        `• Активных акций: ${stats.offers.active_offers}\n` +
+        `• Средняя скидка: ${Math.round(stats.offers.avg_discount || 0)}%`;
+}
+
+// Обработчики платежей
 async function handleCurrencySelection(ctx: Context, userId: number, currency: SupportedCurrency): Promise<boolean> {
     try {
         const packages = paymentService.getAvailablePackages(currency);
         if (packages.length === 0) return false;
 
-        const buttons = packages.map(pkg => ([{
-            text: `${pkg.description} - ${pkg.prices[currency]} ${currency}`,
-            callback_data: `buy_${pkg.id}_${currency}`
-        }]));
+        // Получаем активные специальные предложения
+        const activeOffers = await db.getActiveSpecialOffers();
+        let offerMessage = '';
+        
+        if (activeOffers.length > 0) {
+            offerMessage = '\n\n🎉 Активные акции:\n';
+            activeOffers.forEach(offer => {
+                offerMessage += `• ${offer.title}: -${offer.discountPercent}%\n`;
+            });
+        }
+
+        const buttons = packages.map(pkg => {
+            let price = pkg.prices[currency];
+            let description = pkg.description;
+            
+            // Применяем скидку если есть подходящее предложение
+            const applicableOffer = activeOffers.find(o => 
+                (!o.minCredits || pkg.credits >= o.minCredits)
+            );
+            
+            if (applicableOffer) {
+                const discount = applicableOffer.discountPercent / 100;
+                price = price * (1 - discount);
+                description += ` (${applicableOffer.discountPercent}% OFF)`;
+            }
+
+            return [{
+                text: `${description} - ${price} ${currency}`,
+                callback_data: `buy_${pkg.id}_${currency}`
+            }];
+        });
         
         buttons.push([{
             text: '◀️ Назад',
@@ -237,7 +436,7 @@ async function handleCurrencySelection(ctx: Context, userId: number, currency: S
         await sendMessageWithImage(
             ctx,
             PATHS.ASSETS.PAYMENT,
-            `💳 Выберите пакет кредитов (цены в ${currency}):`,
+            `💳 Выберите пакет кредитов (цены в ${currency}):${offerMessage}`,
             { 
                 reply_markup: {
                     inline_keyboard: buttons
@@ -256,11 +455,27 @@ async function handlePackageSelection(ctx: Context, userId: number, packageId: n
         const paymentUrl = await paymentService.createPayment(userId, packageId, currency);
         const package_ = paymentService.getAvailablePackages(currency).find(p => p.id === packageId);
 
+        // Проверяем наличие активных акций
+        const activeOffers = await db.getActiveSpecialOffers();
+        const applicableOffer = activeOffers.find(o => 
+            (!o.minCredits || package_!.credits >= o.minCredits)
+        );
+
+        let priceInfo = '';
+        if (applicableOffer) {
+            const originalPrice = package_!.prices[currency];
+            const discountedPrice = originalPrice * (1 - applicableOffer.discountPercent / 100);
+            priceInfo = `\nСтарая цена: ${originalPrice} ${currency}\n` +
+                       `Скидка: ${applicableOffer.discountPercent}%\n` +
+                       `Новая цена: ${discountedPrice} ${currency}`;
+        }
+
         await sendMessageWithImage(
             ctx,
             PATHS.ASSETS.PAYMENT_PROCESS,
-            `🔄 Для оплаты ${package_?.description} перейдите по кнопке ниже.\n\n` +
-            'После оплаты кредиты будут автоматически зачислены на ваш счет.',
+            `🔄 Для оплаты ${package_?.description} перейдите по кнопке ниже.${priceInfo}\n\n` +
+            'После оплаты кредиты будут автоматически зачислены на ваш счет.' +
+            (applicableOffer?.extraCredits ? `\n\n🎁 Бонус: +${applicableOffer.extraCredits} кредитов` : ''),
             {
                 reply_markup: {
                     inline_keyboard: [
@@ -281,3 +496,5 @@ async function handlePackageSelection(ctx: Context, userId: number, packageId: n
         await ctx.reply('❌ Произошла ошибка при создании платежа. Попробуйте позже.');
     }
 }
+
+export { handleCallbacks };
