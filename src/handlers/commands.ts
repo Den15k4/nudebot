@@ -73,7 +73,13 @@ export async function handleReferrals(ctx: Context): Promise<void> {
 
         if (transactions.length > 0) {
             message += '\n\n📝 Последние начисления:\n';
-            transactions.forEach((t: ReferralTransaction) => {
+            transactions.forEach((t: { 
+                username: string;
+                amount: number;
+                created_at: Date;
+                referrer_id: number;
+                referral_id: number;
+            }) => {
                 message += `${t.username}: ${t.amount}₽ (${new Date(t.created_at).toLocaleDateString()})\n`;
             });
         }

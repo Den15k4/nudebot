@@ -164,17 +164,22 @@ class DatabaseService {
         );
         return result.rows;
     }
-    // В DatabaseService добавить метод:
+    
+// Изменить интерфейс возвращаемых данных
 async getRecentReferralTransactions(userId: number, limit: number = 5): Promise<Array<{
     username: string;
     amount: number;
     created_at: Date;
+    referrer_id: number;
+    referral_id: number;
 }>> {
     const result = await this.pool.query(
         `SELECT 
             u.username,
             rt.amount,
-            rt.created_at
+            rt.created_at,
+            rt.referrer_id,
+            rt.referral_id
         FROM referral_transactions rt
         JOIN users u ON u.user_id = rt.referral_id
         WHERE rt.referrer_id = $1

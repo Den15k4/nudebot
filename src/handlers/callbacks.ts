@@ -19,6 +19,7 @@ import * as adminHandlers from './admin';
 import { backupService } from '../services/backup';
 import { StatsExporter } from '../services/stats';
 import { ChartGenerator } from '../services/stats';
+import { DetailedStats } from '../types/interfaces';
 
 // Главная функция обработки callback'ов
 export async function handleCallbacks(ctx: Context): Promise<void> {
@@ -119,7 +120,13 @@ export async function handleCallbacks(ctx: Context): Promise<void> {
 
                 if (transactions.length > 0) {
                     message += '\n\n📝 Последние начисления:\n';
-                    transactions.forEach((t: ReferralTransaction) => {
+                    transactions.forEach((t: { 
+                        username: string;
+                        amount: number;
+                        created_at: Date;
+                        referrer_id: number;
+                        referral_id: number;
+                    }) => {
                         message += `${t.username}: ${t.amount}₽ (${new Date(t.created_at).toLocaleDateString()})\n`;
                     });
                 }
@@ -573,6 +580,16 @@ async function handleBackupRestore(ctx: Context, backupId: number): Promise<void
     } catch (error) {
         console.error('Ошибка при восстановлении из бэкапа:', error);
         await ctx.reply('❌ Произошла ошибка при восстановлении');
+    }
+}
+async function handleChartGeneration(ctx: Context, chartType: string): Promise<void> {
+    try {
+        const chartGenerator = new ChartGenerator();
+        const chart = await chartGenerator.generateChart(chartType);
+        await ctx.replyWithPhoto({ source: chart });
+    } catch (error) {
+        console.error('Ошибка при генерации графика:', error);
+        await ctx.reply('❌ Произошла ошибка при генерации графика');
     }
 }
 
