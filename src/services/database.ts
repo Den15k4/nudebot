@@ -410,24 +410,49 @@ async getRecentReferralTransactions(userId: number, limit: number = 5): Promise<
     }
 
     async getUserPhotoStats(userId: number): Promise<PhotoStats> {
-        const result = await this.pool.query(`
-            SELECT 
-                u.photos_processed,
-                COUNT(CASE WHEN ph.success = true THEN 1 END) as successful_photos,
-                COUNT(CASE WHEN ph.success = false THEN 1 END) as failed_photos,
-                COALESCE(AVG(ph.processing_time), 0) as avg_processing_time
-            FROM users u
-            LEFT JOIN photo_processing_history ph ON ph.user_id = u.user_id
-            WHERE u.user_id = $1
-            GROUP BY u.user_id, u.photos_processed
-        `, [userId]);
-        
-        return result.rows[0] || {
-            photos_processed: 0,
-            successful_photos: 0,
-            failed_photos: 0,
-            avg_processing_time: 0
-        };
+        try {
+            // Сначала проверим существование колонки
+            const checkColumn = await this.pool.query(`
+                SELECT column_name 
+                FROM information_schema.columns 
+                WHERE table_name='users' AND column_name='photos_processed'
+            `);
+    
+            // Если колонки нет, добавим её
+            if (checkColumn.rows.length === 0) {
+                await this.pool.query(`
+                    ALTER TABLE users 
+                    ADD COLUMN IF NOT EXISTS photos_processed INTEGER DEFAULT 0
+                `);
+            }
+    
+            const result = await this.pool.query(`
+                SELECT 
+                    COALESCE(u.photos_processed, 0) as photos_processed,
+                    COUNT(CASE WHEN ph.success = true THEN 1 END) as successful_photos,
+                    COUNT(CASE WHEN ph.success = false THEN 1 END) as failed_photos,
+                    COALESCE(AVG(ph.processing_time), 0) as avg_processing_time
+                FROM users u
+                LEFT JOIN photo_processing_history ph ON ph.user_id = u.user_id
+                WHERE u.user_id = $1
+                GROUP BY u.user_id, u.photos_processed
+            `, [userId]);
+            
+            return result.rows[0] || {
+                photos_processed: 0,
+                successful_photos: 0,
+                failed_photos: 0,
+                avg_processing_time: 0
+            };
+        } catch (error) {
+            console.error('Error getting photo stats:', error);
+            return {
+                photos_processed: 0,
+                successful_photos: 0,
+                failed_photos: 0,
+                avg_processing_time: 0
+            };
+        }
     }
 
     // Методы для работы со специальными предложениями
