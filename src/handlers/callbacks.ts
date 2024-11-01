@@ -193,31 +193,30 @@ export async function handleCallbacks(ctx: Context): Promise<void> {
                 break;
 
                 case 'action_accept_rules':
-                if (!ctx.from?.id) return;
-    
-                try {
-                    await db.updateAcceptedRules(ctx.from.id);
-        
-                // Сразу показываем главное меню
-                await sendMessageWithImage(
-                ctx,
-                PATHS.ASSETS.WELCOME,
-            '✅ Спасибо за принятие правил!\n\n' +
-            'Теперь вы можете:\n' +
-            '• Обрабатывать фотографии\n' +
-            '• Покупать кредиты\n' +
-            '• Участвовать в реферальной программе\n\n' +
-            'Используйте кнопки меню для навигации:',
-            getMainKeyboard()
-        );
-    } catch (error) {
-        console.error('Error in rules acceptance:', error);
-        await ctx.reply(
-            'Произошла ошибка, попробуйте еще раз или используйте /start',
-            getInitialKeyboard()
-        );
-    }
-    break;
+                    if (!ctx.from?.id) return;
+                    
+                    try {
+                        // Обновляем статус в базе
+                        await db.updateAcceptedRules(ctx.from.id);
+                        
+                        // Отправляем приветственное сообщение с главным меню
+                        await ctx.editMessageText(
+                            '✅ Спасибо за принятие правил!\n\n' +
+                            'Теперь вам доступны все функции бота:\n' +
+                            '• Обработка изображений\n' +
+                            '• Покупка кредитов\n' +
+                            '• Реферальная программа\n\n' +
+                            'Используйте кнопки меню для навигации:',
+                            getMainKeyboard()
+                        );
+                    } catch (error) {
+                        console.error('Error in rules acceptance:', error);
+                        await ctx.reply(
+                            'Произошла ошибка. Попробуйте использовать команду /start',
+                            getInitialKeyboard()
+                        );
+                    }
+                    break;
 
             default:
                 if (action.startsWith('currency_')) {

@@ -12,36 +12,38 @@ export async function isAdmin(userId: string): Promise<boolean> {
 
 export async function requireAcceptedRules(ctx: Context, next: () => Promise<void>): Promise<void> {
     try {
-        const userId = ctx.from?.id.toString();
+        if (!ctx.from?.id) return;
+
+        const userId = ctx.from.id.toString();
         
-        if (userId && await isAdmin(userId)) {
+        // Пропускаем админов
+        if (await isAdmin(userId)) {
             return next();
         }
 
-        const messageText = ctx.message && 'text' in ctx.message ? ctx.message.text : '';
+        // Список разрешенных действий без принятия правил
+        const allowedActions = ['/start', 'action_rules', 'action_accept_rules', 'action_help'];
         
-        if (
-            messageText === '/start' || 
-            messageText === MENU_ACTIONS.BACK || 
-            messageText === MENU_ACTIONS.VIEW_RULES ||
-            messageText === MENU_ACTIONS.ACCEPT_RULES
-        ) {
-            return next();
-        }
+        // Проверяем текст сообщения или callback данные
+        const action = ctx.callbackQuery?.data || 
+                      (ctx.message && 'text' in ctx.message ? ctx.message.text : '');
 
-        if (!ctx.from?.id) {
-            return;
+        if (allowedActions.includes(action)) {
+            return next();
         }
 
         const accepted = await db.hasAcceptedRules(ctx.from.id);
         if (!accepted) {
-            await sendMessageWithImage(
-                ctx,
-                PATHS.ASSETS.WELCOME,
-                '⚠️ Для использования бота необходимо принять правила.\n' +
-                'Используйте команду /start для просмотра правил.',
-                getInitialKeyboard()
-            );
+            // Отправляем сообщение только если это не callback
+            if (!ctx.callbackQuery) {
+                await sendMessageWithImage(
+                    ctx,
+                    PATHS.ASSETS.WELCOME,
+                    '⚠️ Для использования бота необходимо принять правила.\n' +
+                    'Нажмите на кнопку "Принимаю правила" ниже.',
+                    getInitialKeyboard()
+                );
+            }
             return;
         }
 
