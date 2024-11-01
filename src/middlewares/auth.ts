@@ -25,10 +25,15 @@ export async function requireAcceptedRules(ctx: Context, next: () => Promise<voi
         const allowedActions = ['/start', 'action_rules', 'action_accept_rules', 'action_help'];
         
         // Проверяем текст сообщения или callback данные
-        const action = ('data' in ctx.callbackQuery ? ctx.callbackQuery.data : undefined) || 
-                      (ctx.message && 'text' in ctx.message ? ctx.message.text : '');
+        let action: string | undefined;
+        
+        if (ctx.callbackQuery && 'data' in ctx.callbackQuery) {
+            action = ctx.callbackQuery.data;
+        } else if (ctx.message && 'text' in ctx.message) {
+            action = ctx.message.text;
+        }
 
-        if (allowedActions.includes(action)) {
+        if (action && allowedActions.includes(action)) {
             return next();
         }
 
