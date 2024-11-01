@@ -157,6 +157,24 @@ class DatabaseService {
         );
         return result.rows[0]?.accepted_rules || false;
     }
+    async updateAcceptedRules(userId: number): Promise<void> {
+        const client = await this.pool.connect();
+        try {
+            await client.query('BEGIN');
+    
+            await client.query(
+                'UPDATE users SET accepted_rules = true, updated_at = CURRENT_TIMESTAMP WHERE user_id = $1',
+                [userId]
+            );
+    
+            await client.query('COMMIT');
+        } catch (error) {
+            await client.query('ROLLBACK');
+            throw error;
+        } finally {
+            client.release();
+        }
+    }
 
     async getAllUsers(): Promise<{ user_id: number }[]> {
         const result = await this.pool.query(
@@ -794,24 +812,6 @@ async getUsersToNotify(offerIds: number[]): Promise<number[]> {
     `, [offerIds]);
 
     return result.rows.map(row => row.user_id);
-}
-async updateAcceptedRules(userId: number): Promise<void> {
-    const client = await this.pool.connect();
-    try {
-        await client.query('BEGIN');
-
-        await client.query(
-            'UPDATE users SET accepted_rules = true, updated_at = CURRENT_TIMESTAMP WHERE user_id = $1',
-            [userId]
-        );
-
-        await client.query('COMMIT');
-    } catch (error) {
-        await client.query('ROLLBACK');
-        throw error;
-    } finally {
-        client.release();
-    }
 }
 
     // Служебные методы
