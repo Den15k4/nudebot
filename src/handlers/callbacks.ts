@@ -193,15 +193,20 @@ export async function handleCallbacks(ctx: Context): Promise<void> {
                 );
                 break;
 
-            case 'action_accept_rules':
-                await db.updateUserCredits(userId, 0);
-                await sendMessageWithImage(
-                    ctx,
-                    PATHS.ASSETS.WELCOME,
-                    MESSAGES.RULES_ACCEPTED,
-                    getMainKeyboard()
-                );
-                break;
+                case 'action_accept_rules':
+                    try {
+                        await db.updateAcceptedRules(userId);
+                        await sendMessageWithImage(
+                            ctx,
+                            PATHS.ASSETS.WELCOME,
+                            MESSAGES.RULES_ACCEPTED,
+                            getMainKeyboard()
+                        );
+                    } catch (error) {
+                        console.error('Ошибка при принятии правил:', error);
+                        await ctx.reply('❌ Произошла ошибка. Попробуйте позже.');
+                    }
+                    break;
 
             default:
                 if (action.startsWith('currency_')) {

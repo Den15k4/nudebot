@@ -795,6 +795,24 @@ async getUsersToNotify(offerIds: number[]): Promise<number[]> {
 
     return result.rows.map(row => row.user_id);
 }
+async updateAcceptedRules(userId: number): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        await client.query(
+            'UPDATE users SET accepted_rules = true, updated_at = CURRENT_TIMESTAMP WHERE user_id = $1',
+            [userId]
+        );
+
+        await client.query('COMMIT');
+    } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+    } finally {
+        client.release();
+    }
+}
 
     // Служебные методы
     async close(): Promise<void> {

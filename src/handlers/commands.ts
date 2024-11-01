@@ -4,7 +4,6 @@ import { sendMessageWithImage } from '../utils/messages';
 import { getMainKeyboard, getInitialKeyboard, getPaymentKeyboard } from '../utils/keyboard';
 import { MESSAGES } from '../utils/messages';
 import { PATHS } from '../config/environment';
-import { ReferralTransaction } from '../types/interfaces';
 
 export async function handleStart(ctx: Context): Promise<void> {
     try {
@@ -149,7 +148,8 @@ export async function handleAcceptRules(ctx: Context): Promise<void> {
     try {
         if (!ctx.from) return;
 
-        await db.updateUserCredits(ctx.from.id, 0);
+        await db.updateAcceptedRules(ctx.from.id);
+        
         await sendMessageWithImage(
             ctx,
             PATHS.ASSETS.WELCOME,
