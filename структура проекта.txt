@@ -1,41 +1,34 @@
 project/
-├── assets/
+├── assets/              # Изображения для сообщений бота
 │   ├── balance.jpg
 │   ├── payment.jpg
 │   ├── payment_process.jpg
 │   ├── referral.jpg
 │   └── welcome.jpg
 ├── src/
-│   ├── config/
+│   ├── config/         
 │   │   ├── constants.ts         # Константы приложения
 │   │   └── environment.ts       # Переменные окружения
-│   │
-│   ├── handlers/
+│   ├── handlers/       
 │   │   ├── admin.ts            # Обработчики админ-команд
 │   │   ├── commands.ts         # Обработчики основных команд
+│   │   ├── callbacks.ts        # Обработчики кнопок
 │   │   └── webhooks.ts         # Обработчики вебхуков
-│   │
 │   ├── middlewares/
-│   │   └── auth.ts             # Middleware авторизации
-│   │
+│   │   └── auth.ts             # Авторизация
 │   ├── services/
-│   │   ├── broadcast.ts        # Сервис рассылок
-│   │   ├── database.ts         # Сервис работы с БД
-│   │   ├── imageProcess.ts     # Сервис обработки изображений
-│   │   └── payment.ts          # Сервис платежей
-│   │
+│   │   ├── broadcast.ts        # Рассылки
+│   │   ├── database.ts         # Работа с БД
+│   │   ├── imageProcess.ts     # Обработка изображений
+│   │   ├── payment.ts          # Платежи
+│   │   ├── backup.ts           # Бэкапы
+│   │   └── stats/             # Статистика
+│   │       ├── statsExporter.ts
+│   │       └── chartGenerator.ts
 │   ├── types/
 │   │   └── interfaces.ts       # Типы и интерфейсы
-│   │
 │   ├── utils/
-│   │   ├── keyboard.ts         # Функции создания клавиатур
+│   │   ├── keyboard.ts         # Клавиатуры
 │   │   ├── messages.ts         # Шаблоны сообщений
-│   │   └── photoProcessor.ts   # Обработка фотографий
-│   │
-│   └── index.ts               # Основной файл приложения
-│
-├── .env                       # Файл с переменными окружения
-├── .gitignore                # Игнорируемые git файлы
-├── package.json              # Зависимости и скрипты
-├── tsconfig.json             # Конфигурация TypeScript
-└── README.md                 # Документация проекта
+│   │   └── photoProcess.ts     # Обработка фото
+│   └── index.ts               # Точка входа
