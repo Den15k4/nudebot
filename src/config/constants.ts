@@ -16,7 +16,7 @@ export const ADMIN_ACTIONS = {
 } as const;
 
 export const API_CONFIG = {
-    RULES_URL: 'https://telegra.ph/Pravila-ispolzovaniya-bota-03-27',
+    RULES_URL: 'https://telegra.ph/Polzovatelskoe-Soglashenie-Photowombot-10-30',
     RUKASSA_API_URL: 'https://lk.rukassa.pro/api/v1/create',
     CLOTHOFF_API_URL: 'https://public-api.clothoff.net'
 } as const;
