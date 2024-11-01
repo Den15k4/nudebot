@@ -18,6 +18,7 @@ import { isAdmin } from '../middlewares/auth';
 import * as adminHandlers from './admin';
 import { StatsExporter } from '../services/stats';
 import { ChartGenerator } from '../services/stats';
+import { backupService, BackupService } from '../services/backup';
 
 export async function handleCallbacks(ctx: Context): Promise<void> {
     if (!ctx.callbackQuery || !('data' in ctx.callbackQuery)) {
@@ -500,12 +501,8 @@ async function handleBackupRestore(ctx: Context, backupId: number): Promise<void
         const backup = backups.find(b => b.id === backupId);
         if (backup) {
             await ctx.reply('🔄 Начинаю восстановление из бэкапа...');
-            
             try {
-                // Восстановление из бэкапа
-                const backupService = new BackupService(db.pool);
                 await backupService.restoreFromBackup(backup.filename);
-                
                 await ctx.reply('✅ Восстановление успешно завершено');
             } catch (restoreError) {
                 console.error('Ошибка при восстановлении:', restoreError);
