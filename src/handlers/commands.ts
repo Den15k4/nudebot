@@ -4,39 +4,7 @@ import { sendMessageWithImage } from '../utils/messages';
 import { getMainKeyboard, getInitialKeyboard, getPaymentKeyboard } from '../utils/keyboard';
 import { MESSAGES } from '../utils/messages';
 import { PATHS } from '../config/environment';
-
-export async function handleReferrals(ctx: Context): Promise<void> {
-    try {
-        if (!ctx.from) return;
-
-        const userId = ctx.from.id;
-        const stats = await db.getReferralStats(userId);
-        const transactions = await db.getRecentReferralTransactions(userId);
-        
-        let message = '👥 <b>Ваша реферальная программа:</b>\n\n' +
-            `🔢 Количество рефералов: ${stats.count}\n` +
-            `💰 Заработано: ${stats.earnings}₽\n\n` +
-            '🔗 Ваша реферальная ссылка:\n' +
-            `https://t.me/${ctx.botInfo?.username}?start=${userId}`;
-
-        if (transactions.length > 0) {
-            message += '\n\n📝 Последние начисления:\n';
-            transactions.forEach(t => {
-                message += `${t.username}: ${t.amount}₽ (${new Date(t.created_at).toLocaleDateString()})\n`;
-            });
-        }
-
-        await sendMessageWithImage(
-            ctx,
-            PATHS.ASSETS.REFERRAL,
-            message,
-            getMainKeyboard()
-        );
-    } catch (error) {
-        console.error('Ошибка при получении реферальной статистики:', error);
-        await ctx.reply('❌ Произошла ошибка. Попробуйте позже.');
-    }
-}
+import { ReferralTransaction } from '../types/interfaces';
 
 export async function handleStart(ctx: Context): Promise<void> {
     try {
@@ -89,15 +57,53 @@ export async function handleStart(ctx: Context): Promise<void> {
     }
 }
 
+export async function handleReferrals(ctx: Context): Promise<void> {
+    try {
+        if (!ctx.from) return;
+
+        const userId = ctx.from.id;
+        const stats = await db.getReferralStats(userId);
+        const transactions = await db.getRecentReferralTransactions(userId);
+        
+        let message = '👥 <b>Ваша реферальная программа:</b>\n\n' +
+            `🔢 Количество рефералов: ${stats.count}\n` +
+            `💰 Заработано: ${stats.earnings}₽\n\n` +
+            '🔗 Ваша реферальная ссылка:\n' +
+            `https://t.me/${ctx.botInfo?.username}?start=${userId}`;
+
+        if (transactions.length > 0) {
+            message += '\n\n📝 Последние начисления:\n';
+            transactions.forEach((t: ReferralTransaction) => {
+                message += `${t.username}: ${t.amount}₽ (${new Date(t.created_at).toLocaleDateString()})\n`;
+            });
+        }
+
+        await sendMessageWithImage(
+            ctx,
+            PATHS.ASSETS.REFERRAL,
+            message,
+            getMainKeyboard()
+        );
+    } catch (error) {
+        console.error('Ошибка при получении реферальной статистики:', error);
+        await ctx.reply('❌ Произошла ошибка. Попробуйте позже.');
+    }
+}
+
 export async function handleCredits(ctx: Context): Promise<void> {
     try {
         if (!ctx.from) return;
         
         const credits = await db.checkCredits(ctx.from.id);
+        const stats = await db.getUserPhotoStats(ctx.from.id);
         await sendMessageWithImage(
             ctx,
             PATHS.ASSETS.BALANCE,
-            `💳 У вас ${credits} кредитов`,
+            `💳 У вас ${credits} кредитов\n\n` +
+            `📊 Ваша статистика:\n` +
+            `• Обработано фото: ${stats.photos_processed}\n` +
+            `• Успешно: ${stats.successful_photos}\n` +
+            `• Ошибок: ${stats.failed_photos}`,
             getMainKeyboard()
         );
     } catch (error) {
@@ -137,7 +143,7 @@ export async function handleAcceptRules(ctx: Context): Promise<void> {
     try {
         if (!ctx.from) return;
 
-        await db.updateUserCredits(ctx.from.id, 0); // Обновляем статус правил
+        await db.updateUserCredits(ctx.from.id, 0);
         await sendMessageWithImage(
             ctx,
             PATHS.ASSETS.WELCOME,

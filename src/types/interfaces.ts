@@ -53,6 +53,8 @@ export interface User {
     photos_processed: number;
     total_spent: number;
     last_notification_read?: Date;
+    referrer_id?: number;
+    referral_earnings: number;
 }
 
 export interface Payment {
@@ -87,6 +89,25 @@ export interface SpecialOffer {
     extraCredits?: number;
 }
 
+export interface ReferralTransaction {
+    username: string;
+    amount: number;
+    created_at: Date;
+    referrer_id: number;
+    referral_id: number;
+    payment_id?: number;
+}
+
+export interface BackupRecord {
+    id: number;
+    filename: string;
+    created_at: Date;
+    size_bytes: number;
+    status: string;
+    error_message?: string;
+    storage_path: string;
+}
+
 export interface Notification {
     id?: number;
     type: string;
@@ -97,15 +118,46 @@ export interface Notification {
     isSent?: boolean;
     sentAt?: Date;
 }
+export interface PhotoProcessingStats {
+    date: Date;
+    total_processed: number;
+    successful: number;
+    failed: number;
+    avg_processing_time: number;
+}
 
-export interface BackupRecord {
-    id?: number;
-    filename: string;
-    createdAt?: Date;
-    sizeBytes: number;
-    status: string;
-    errorMessage?: string;
-    storagePath: string;
+export interface PaymentStats {
+    date: Date;
+    total_payments: number;
+    total_amount: number;
+    unique_users: number;
+    average_payment: number;
+}
+
+export interface UserGrowthStats {
+    date: Date;
+    new_users: number;
+    total_users: number;
+}
+
+export interface OfferStats {
+    title: string;
+    discount_percent: number;
+    users_used: number;
+    total_amount_saved: number;
+    total_purchases: number;
+}
+
+export interface TargetedBroadcastOptions {
+    userIds: number[];
+    message: string;
+    image?: Buffer;
+    keyboard?: any;
+}
+
+export interface NotificationTarget {
+    user_id: number;
+    last_notification_read: Date | null;
 }
 
 export type SupportedCurrency = 'RUB' | 'KZT' | 'UZS' | 'CRYPTO';
@@ -123,4 +175,28 @@ export interface PaymentPackage {
     credits: number;
     prices: Record<SupportedCurrency, number>;
     description: string;
+}
+
+export interface DetailedStats {
+    users: {
+        total_users: number;
+        active_today: number;
+        total_credits: number;
+        total_revenue: number;
+    };
+    photos: {
+        total_processed: number;
+        successful: number;
+        failed: number;
+        avg_processing_time: number;
+    };
+    payments: {
+        total_payments: number;
+        total_amount: number;
+        unique_users: number;
+    };
+    offers: {
+        active_offers: number;
+        avg_discount: number;
+    };
 }

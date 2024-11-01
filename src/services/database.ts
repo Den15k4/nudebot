@@ -164,6 +164,26 @@ class DatabaseService {
         );
         return result.rows;
     }
+    // В DatabaseService добавить метод:
+async getRecentReferralTransactions(userId: number, limit: number = 5): Promise<Array<{
+    username: string;
+    amount: number;
+    created_at: Date;
+}>> {
+    const result = await this.pool.query(
+        `SELECT 
+            u.username,
+            rt.amount,
+            rt.created_at
+        FROM referral_transactions rt
+        JOIN users u ON u.user_id = rt.referral_id
+        WHERE rt.referrer_id = $1
+        ORDER BY rt.created_at DESC
+        LIMIT $2`,
+        [userId, limit]
+    );
+    return result.rows;
+}
 
     async checkCredits(userId: number): Promise<number> {
         const result = await this.pool.query(
@@ -562,6 +582,214 @@ class DatabaseService {
         `);
         return result.rows;
     }
+
+// Добавьте эти методы в класс DatabaseService
+
+// Методы для целевых рассылок
+async getUsersWithCredits(minCredits: number = 1): Promise<number[]> {
+    const result = await this.pool.query(
+        'SELECT user_id FROM users WHERE credits >= $1 AND accepted_rules = true',
+        [minCredits]
+    );
+    return result.rows.map(row => row.user_id);
+}
+
+async getNewUsers(hours: number = 24): Promise<number[]> {
+    const result = await this.pool.query(
+        'SELECT user_id FROM users WHERE created_at >= NOW() - INTERVAL \'1 hour\' * $1 AND accepted_rules = true',
+        [hours]
+    );
+    return result.rows.map(row => row.user_id);
+}
+
+async getPaidUsers(): Promise<number[]> {
+    const result = await this.pool.query(`
+        SELECT DISTINCT u.user_id 
+        FROM users u 
+        JOIN payments p ON p.user_id = u.user_id 
+        WHERE p.status = 'paid' AND u.accepted_rules = true
+    `);
+    return result.rows.map(row => row.user_id);
+}
+
+async getActiveUsers(days: number = 7): Promise<number[]> {
+    const result = await this.pool.query(
+        'SELECT user_id FROM users WHERE last_used >= NOW() - INTERVAL \'1 day\' * $1 AND accepted_rules = true',
+        [days]
+    );
+    return result.rows.map(row => row.user_id);
+}
+
+// Методы для работы с акциями
+async getOfferById(offerId: number): Promise<SpecialOffer | null> {
+    const result = await this.pool.query(
+        'SELECT * FROM special_offers WHERE id = $1',
+        [offerId]
+    );
+    
+    if (result.rows.length === 0) return null;
+    
+    return {
+        id: result.rows[0].id,
+        title: result.rows[0].title,
+        description: result.rows[0].description,
+        discountPercent: result.rows[0].discount_percent,
+        startDate: new Date(result.rows[0].start_date),
+        endDate: new Date(result.rows[0].end_date),
+        isActive: result.rows[0].is_active,
+        minCredits: result.rows[0].min_credits,
+        extraCredits: result.rows[0].extra_credits
+    };
+}
+
+async updateSpecialOffer(offerId: number, offer: Partial<SpecialOffer>): Promise<void> {
+    const updates: string[] = [];
+    const values: any[] = [];
+    let paramCount = 1;
+
+    if (offer.title !== undefined) {
+        updates.push(`title = $${paramCount}`);
+        values.push(offer.title);
+        paramCount++;
+    }
+    if (offer.description !== undefined) {
+        updates.push(`description = $${paramCount}`);
+        values.push(offer.description);
+        paramCount++;
+    }
+    if (offer.discountPercent !== undefined) {
+        updates.push(`discount_percent = $${paramCount}`);
+        values.push(offer.discountPercent);
+        paramCount++;
+    }
+    if (offer.startDate !== undefined) {
+        updates.push(`start_date = $${paramCount}`);
+        values.push(offer.startDate);
+        paramCount++;
+    }
+    if (offer.endDate !== undefined) {
+        updates.push(`end_date = $${paramCount}`);
+        values.push(offer.endDate);
+        paramCount++;
+    }
+    if (offer.isActive !== undefined) {
+        updates.push(`is_active = $${paramCount}`);
+        values.push(offer.isActive);
+        paramCount++;
+    }
+    if (offer.minCredits !== undefined) {
+        updates.push(`min_credits = $${paramCount}`);
+        values.push(offer.minCredits);
+        paramCount++;
+    }
+    if (offer.extraCredits !== undefined) {
+        updates.push(`extra_credits = $${paramCount}`);
+        values.push(offer.extraCredits);
+        paramCount++;
+    }
+
+    if (updates.length === 0) return;
+
+    values.push(offerId);
+    await this.pool.query(
+        `UPDATE special_offers SET ${updates.join(', ')} WHERE id = $${paramCount}`,
+        values
+    );
+}
+
+// Расширенные методы статистики
+async getPhotoProcessingStats(days: number = 7): Promise<any> {
+    const result = await this.pool.query(`
+        SELECT 
+            DATE_TRUNC('day', processed_at) as date,
+            COUNT(*) as total_processed,
+            COUNT(CASE WHEN success = true THEN 1 END) as successful,
+            COUNT(CASE WHEN success = false THEN 1 END) as failed,
+            AVG(processing_time) as avg_processing_time
+        FROM photo_processing_history
+        WHERE processed_at >= NOW() - INTERVAL '1 day' * $1
+        GROUP BY DATE_TRUNC('day', processed_at)
+        ORDER BY date DESC
+    `, [days]);
+    return result.rows;
+}
+
+async getPaymentStats(days: number = 7): Promise<any> {
+    const result = await this.pool.query(`
+        SELECT 
+            DATE_TRUNC('day', created_at) as date,
+            COUNT(*) as total_payments,
+            SUM(amount) as total_amount,
+            COUNT(DISTINCT user_id) as unique_users,
+            AVG(amount) as average_payment
+        FROM payments
+        WHERE status = 'paid' 
+        AND created_at >= NOW() - INTERVAL '1 day' * $1
+        GROUP BY DATE_TRUNC('day', created_at)
+        ORDER BY date DESC
+    `, [days]);
+    return result.rows;
+}
+
+async getUserGrowthStats(days: number = 7): Promise<any> {
+    const result = await this.pool.query(`
+        SELECT 
+            DATE_TRUNC('day', created_at) as date,
+            COUNT(*) as new_users,
+            SUM(COUNT(*)) OVER (ORDER BY DATE_TRUNC('day', created_at)) as total_users
+        FROM users
+        WHERE created_at >= NOW() - INTERVAL '1 day' * $1
+        GROUP BY DATE_TRUNC('day', created_at)
+        ORDER BY date DESC
+    `, [days]);
+    return result.rows;
+}
+
+async getOfferStats(offerId: number): Promise<any> {
+    const result = await this.pool.query(`
+        SELECT 
+            so.title,
+            so.discount_percent,
+            COUNT(DISTINCT p.user_id) as users_used,
+            SUM(p.amount) as total_amount_saved,
+            COUNT(p.id) as total_purchases
+        FROM special_offers so
+        LEFT JOIN payments p ON p.special_offer_id = so.id
+        WHERE so.id = $1
+        GROUP BY so.id, so.title, so.discount_percent
+    `, [offerId]);
+    return result.rows[0];
+}
+
+// Методы для работы с уведомлениями
+async markUsersNotified(userIds: number[]): Promise<void> {
+    if (userIds.length === 0) return;
+    
+    await this.pool.query(
+        'UPDATE users SET last_notification_read = NOW() WHERE user_id = ANY($1)',
+        [userIds]
+    );
+}
+
+async getUsersToNotify(offerIds: number[]): Promise<number[]> {
+    if (offerIds.length === 0) return [];
+
+    const result = await this.pool.query(`
+        SELECT DISTINCT u.user_id
+        FROM users u
+        WHERE u.accepted_rules = true
+        AND (
+            u.last_notification_read IS NULL
+            OR u.last_notification_read < (
+                SELECT MAX(created_at)
+                FROM special_offers
+                WHERE id = ANY($1)
+            )
+        )
+    `, [offerIds]);
+
+    return result.rows.map(row => row.user_id);
+}
 
     // Служебные методы
     async close(): Promise<void> {
