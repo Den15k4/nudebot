@@ -193,32 +193,31 @@ export async function handleCallbacks(ctx: Context): Promise<void> {
                 break;
 
                 case 'action_accept_rules':
-                    try {
-                        if (!ctx.from?.id) return;
-                        
-                        console.log(`Processing rules acceptance for user ${ctx.from.id}`);
-                        const accepted = await db.updateAcceptedRules(ctx.from.id);
-                        
-                        if (accepted) {
-                            console.log(`Rules accepted successfully for user ${ctx.from.id}`);
-                            await sendMessageWithImage(
-                                ctx,
-                                PATHS.ASSETS.WELCOME,
-                                MESSAGES.RULES_ACCEPTED,
-                                getMainKeyboard()
-                            );
-                        } else {
-                            console.log(`Failed to accept rules for user ${ctx.from.id}`);
-                            throw new Error('Failed to update rules acceptance status');
-                        }
-                    } catch (error) {
-                        console.error('Error in rules acceptance:', error);
-                        await ctx.reply(
-                            '❌ Произошла ошибка при принятии правил. Попробуйте еще раз или используйте команду /start',
-                            getInitialKeyboard()
-                        );
-                    }
-                    break;
+                if (!ctx.from?.id) return;
+    
+                try {
+                    await db.updateAcceptedRules(ctx.from.id);
+        
+                // Сразу показываем главное меню
+                await sendMessageWithImage(
+                ctx,
+                PATHS.ASSETS.WELCOME,
+            '✅ Спасибо за принятие правил!\n\n' +
+            'Теперь вы можете:\n' +
+            '• Обрабатывать фотографии\n' +
+            '• Покупать кредиты\n' +
+            '• Участвовать в реферальной программе\n\n' +
+            'Используйте кнопки меню для навигации:',
+            getMainKeyboard()
+        );
+    } catch (error) {
+        console.error('Error in rules acceptance:', error);
+        await ctx.reply(
+            'Произошла ошибка, попробуйте еще раз или используйте /start',
+            getInitialKeyboard()
+        );
+    }
+    break;
 
             default:
                 if (action.startsWith('currency_')) {
