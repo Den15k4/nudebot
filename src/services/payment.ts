@@ -125,12 +125,13 @@ class PaymentService {
             formData.append('token', ENV.RUKASSA_TOKEN);
             formData.append('order_id', merchantOrderId);
             formData.append('amount', amountInRubles);
-            
+            formData.append('user_code', userId.toString()); // Добавляем user_code
+    
             // Добавляем метод оплаты в зависимости от валюты
             let paymentMethod: string;
             switch(currency) {
                 case 'RUB':
-                    paymentMethod = 'card,sbp'; // Добавляем СБП как альтернативу
+                    paymentMethod = 'card,sbp';
                     break;
                 case 'KZT':
                     paymentMethod = 'card_kzt,kaspi';
@@ -147,6 +148,16 @@ class PaymentService {
             
             formData.append('method', paymentMethod);
             formData.append('currency_in', currency === 'CRYPTO' ? 'USDT' : currency);
+            
+            // Добавляем дополнительную информацию
+            formData.append('custom_fields', JSON.stringify({
+                user_id: userId,
+                package_id: packageId,
+                credits: package_.credits,
+                description: `${package_.description} для пользователя ${userId}`
+            }));
+    
+            // URLs
             formData.append('webhook_url', `${ENV.WEBHOOK_URL}/rukassa/webhook`);
             formData.append('success_url', `${ENV.WEBHOOK_URL}/payment/success`);
             formData.append('fail_url', `${ENV.WEBHOOK_URL}/payment/fail`);
@@ -156,7 +167,8 @@ class PaymentService {
                 amount: amountInRubles,
                 method: paymentMethod,
                 currency: currency,
-                merchantOrderId
+                merchantOrderId,
+                user_code: userId
             });
     
             const response = await axios.post(
@@ -173,6 +185,9 @@ class PaymentService {
             console.log('Ответ Rukassa:', response.data);
     
             if (response.data.error) {
+                if (response.data.error === '100' && response.data.message === 'error user_code') {
+                    throw new Error('Ошибка создания платежа: некорректный идентификатор пользователя');
+                }
                 if (response.data.error.includes('method is not activated')) {
                     throw new Error(`Способ оплаты ${currency} временно недоступен. Пожалуйста, выберите другой способ оплаты.`);
                 }
@@ -192,7 +207,8 @@ class PaymentService {
                 const errorMessage = error.response?.data?.message || error.response?.data?.error || 'Сервис оплаты временно недоступен';
                 console.error('Ошибка API Rukassa:', {
                     status: error.response?.status,
-                    data: error.response?.data
+                    data: error.response?.data,
+                    userId: userId
                 });
                 throw new Error(`Ошибка оплаты: ${errorMessage}`);
             }
