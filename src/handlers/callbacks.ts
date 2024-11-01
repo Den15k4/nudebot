@@ -192,36 +192,33 @@ export async function handleCallbacks(ctx: Context): Promise<void> {
                 );
                 break;
 
-            case 'action_accept_rules':
-                try {
-                    console.log(`Processing rules acceptance for user ${userId}`);
-
-                    await db.updateAcceptedRules(userId);
-                    console.log(`Rules updated in database for user ${userId}`);
-
-                    // Проверим статус после обновления
-                    const accepted = await db.hasAcceptedRules(userId);
-                    console.log(`Current rules acceptance status for user ${userId}: ${accepted}`);
-
-                    if (accepted) {
-                        await sendMessageWithImage(
-                            ctx,
-                            PATHS.ASSETS.WELCOME,
-                            MESSAGES.RULES_ACCEPTED,
-                            getMainKeyboard()
+                case 'action_accept_rules':
+                    try {
+                        if (!ctx.from?.id) return;
+                        
+                        console.log(`Processing rules acceptance for user ${ctx.from.id}`);
+                        const accepted = await db.updateAcceptedRules(ctx.from.id);
+                        
+                        if (accepted) {
+                            console.log(`Rules accepted successfully for user ${ctx.from.id}`);
+                            await sendMessageWithImage(
+                                ctx,
+                                PATHS.ASSETS.WELCOME,
+                                MESSAGES.RULES_ACCEPTED,
+                                getMainKeyboard()
+                            );
+                        } else {
+                            console.log(`Failed to accept rules for user ${ctx.from.id}`);
+                            throw new Error('Failed to update rules acceptance status');
+                        }
+                    } catch (error) {
+                        console.error('Error in rules acceptance:', error);
+                        await ctx.reply(
+                            '❌ Произошла ошибка при принятии правил. Попробуйте еще раз или используйте команду /start',
+                            getInitialKeyboard()
                         );
-                        console.log(`Welcome message sent to user ${userId}`);
-                    } else {
-                        console.log(`Failed to update rules acceptance for user ${userId}`);
-                        throw new Error('Failed to update rules acceptance');
                     }
-                } catch (error) {
-                    console.error('Error in rules acceptance:', error);
-                    await ctx.reply(
-                        '❌ Произошла ошибка при принятии правил. Попробуйте еще раз или обратитесь в поддержку.'
-                    );
-                }
-                break;
+                    break;
 
             default:
                 if (action.startsWith('currency_')) {

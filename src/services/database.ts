@@ -144,8 +144,11 @@ class DatabaseService {
 
     // Методы для работы с пользователями
     async addUser(userId: number, username?: string): Promise<void> {
+        const client = await this.pool.connect();
         try {
-            const result = await this.pool.query(
+            await client.query('BEGIN');
+            
+            const result = await client.query(
                 `INSERT INTO users 
                 (user_id, username, credits, accepted_rules) 
                 VALUES ($1, $2, 0, FALSE) 
@@ -155,39 +158,73 @@ class DatabaseService {
                 [userId, username || 'anonymous']
             );
             
+            await client.query('COMMIT');
             console.log('User added/updated:', result.rows[0]);
         } catch (error) {
+            await client.query('ROLLBACK');
             console.error('Error adding user:', error);
             throw error;
+        } finally {
+            client.release();
         }
     }
-
+    
     async hasAcceptedRules(userId: number): Promise<boolean> {
-        const result = await this.pool.query(
-            'SELECT accepted_rules FROM users WHERE user_id = $1',
-            [userId]
-        );
-        return result.rows[0]?.accepted_rules || false;
-    }
-    
-    async updateAcceptedRules(userId: number): Promise<void> {
+        const client = await this.pool.connect();
         try {
-            console.log(`Attempting to update rules acceptance for user ${userId}`);
-            
-            await this.pool.query(
-                'UPDATE users SET accepted_rules = true WHERE user_id = $1',
-                [userId]
-            );
-    
-            const result = await this.pool.query(
+            const result = await client.query(
                 'SELECT accepted_rules FROM users WHERE user_id = $1',
                 [userId]
             );
-            
-            console.log(`Rules acceptance update result:`, result.rows[0]);
+            return result.rows[0]?.accepted_rules || false;
         } catch (error) {
+            console.error('Error checking rules acceptance:', error);
+            throw error;
+        } finally {
+            client.release();
+        }
+    }
+    
+    async updateAcceptedRules(userId: number): Promise<boolean> {
+        const client = await this.pool.connect();
+        try {
+            await client.query('BEGIN');
+            
+            // Сначала проверяем существование пользователя
+            const userExists = await client.query(
+                'SELECT user_id FROM users WHERE user_id = $1',
+                [userId]
+            );
+    
+            if (userExists.rows.length === 0) {
+                // Если пользователя нет, создаем его с принятыми правилами
+                await client.query(
+                    'INSERT INTO users (user_id, accepted_rules, credits) VALUES ($1, true, 0)',
+                    [userId]
+                );
+            } else {
+                // Если пользователь существует, обновляем статус правил
+                await client.query(
+                    'UPDATE users SET accepted_rules = true WHERE user_id = $1',
+                    [userId]
+                );
+            }
+    
+            // Проверяем результат обновления
+            const result = await client.query(
+                'SELECT accepted_rules FROM users WHERE user_id = $1',
+                [userId]
+            );
+    
+            await client.query('COMMIT');
+            
+            return result.rows[0]?.accepted_rules || false;
+        } catch (error) {
+            await client.query('ROLLBACK');
             console.error('Error updating rules acceptance:', error);
             throw error;
+        } finally {
+            client.release();
         }
     }
 
