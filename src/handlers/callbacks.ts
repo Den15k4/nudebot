@@ -493,14 +493,26 @@ async function handleOfferDeactivation(ctx: Context, offerId: number): Promise<v
     }
 }
 
+// В callbacks.ts заменим функцию handleBackupRestore на:
 async function handleBackupRestore(ctx: Context, backupId: number): Promise<void> {
     try {
         const backups = await db.getBackupHistory();
         const backup = backups.find(b => b.id === backupId);
         if (backup) {
             await ctx.reply('🔄 Начинаю восстановление из бэкапа...');
-            await adminHandlers.handleBackupRestore(ctx, backup.filename);
-            await ctx.reply('✅ Восстановление успешно завершено');
+            
+            try {
+                // Восстановление из бэкапа
+                const backupService = new BackupService(db.pool);
+                await backupService.restoreFromBackup(backup.filename);
+                
+                await ctx.reply('✅ Восстановление успешно завершено');
+            } catch (restoreError) {
+                console.error('Ошибка при восстановлении:', restoreError);
+                await ctx.reply('❌ Ошибка при восстановлении бэкапа');
+            }
+        } else {
+            await ctx.reply('❌ Бэкап не найден');
         }
     } catch (error) {
         console.error('Ошибка при восстановлении из бэкапа:', error);
