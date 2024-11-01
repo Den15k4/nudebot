@@ -9,29 +9,29 @@ export const SUPPORTED_CURRENCIES: Currency[] = [
     { 
         code: 'RUB', 
         symbol: '₽', 
-        name: 'Visa/MC (RUB)', 
-        method: 'card',
+        name: 'Банковская карта / СБП (RUB)', 
+        method: 'card,sbp',
         minAmount: 300
     },
     { 
         code: 'KZT', 
         symbol: '₸', 
-        name: 'Visa/MC (KZT)', 
-        method: 'card_kzt',
+        name: 'Kaspi / Карта (KZT)', 
+        method: 'card_kzt,kaspi',
         minAmount: 32500
     },
     { 
         code: 'UZS', 
         symbol: 'сум', 
-        name: 'Visa/MC (UZS)', 
-        method: 'card_uzs',
+        name: 'CLICK / Карта (UZS)', 
+        method: 'card_uzs,click',
         minAmount: 86000
     },
     { 
         code: 'CRYPTO', 
         symbol: 'USDT', 
-        name: 'Криптовалюта', 
-        method: 'crypto',
+        name: 'Криптовалюта (USDT/BTC)', 
+        method: 'crypto_tron,crypto_btc,crypto_usdt',
         minAmount: 3
     }
 ];
@@ -100,39 +100,65 @@ class PaymentService {
         if (!package_) {
             throw new Error('Неверный ID пакета');
         }
-
+    
         const curr = SUPPORTED_CURRENCIES.find(c => c.code === currency);
         if (!curr) {
             throw new Error('Неподдерживаемая валюта');
         }
-
+    
         if (package_.prices[currency] === 0) {
             throw new Error(`Этот пакет недоступен для оплаты в ${currency}`);
         }
-
+    
         if (package_.prices[currency] < curr.minAmount) {
             throw new Error(`Минимальная сумма для ${currency}: ${curr.minAmount} ${curr.symbol}`);
         }
-
+    
         const merchantOrderId = `${userId}_${Date.now()}`;
         const amountInRubles = this.convertToRubles(package_.prices[currency], currency);
         
         try {
             await db.createPayment(userId, merchantOrderId, package_.prices[currency], package_.credits, currency);
-
+    
             const formData = new URLSearchParams();
             formData.append('shop_id', ENV.SHOP_ID);
             formData.append('token', ENV.RUKASSA_TOKEN);
-            formData.append('user_code', userId.toString());
             formData.append('order_id', merchantOrderId);
             formData.append('amount', amountInRubles);
-            formData.append('method', curr.method);
-            formData.append('currency_in', currency);
+            
+            // Добавляем метод оплаты в зависимости от валюты
+            let paymentMethod: string;
+            switch(currency) {
+                case 'RUB':
+                    paymentMethod = 'card,sbp'; // Добавляем СБП как альтернативу
+                    break;
+                case 'KZT':
+                    paymentMethod = 'card_kzt,kaspi';
+                    break;
+                case 'UZS':
+                    paymentMethod = 'card_uzs,click';
+                    break;
+                case 'CRYPTO':
+                    paymentMethod = 'crypto_tron,crypto_btc,crypto_usdt';
+                    break;
+                default:
+                    paymentMethod = 'card';
+            }
+            
+            formData.append('method', paymentMethod);
+            formData.append('currency_in', currency === 'CRYPTO' ? 'USDT' : currency);
             formData.append('webhook_url', `${ENV.WEBHOOK_URL}/rukassa/webhook`);
             formData.append('success_url', `${ENV.WEBHOOK_URL}/payment/success`);
             formData.append('fail_url', `${ENV.WEBHOOK_URL}/payment/fail`);
             formData.append('back_url', `${ENV.WEBHOOK_URL}/payment/back`);
-
+    
+            console.log('Создание платежа с параметрами:', {
+                amount: amountInRubles,
+                method: paymentMethod,
+                currency: currency,
+                merchantOrderId
+            });
+    
             const response = await axios.post(
                 API_CONFIG.RUKASSA_API_URL,
                 formData,
@@ -143,19 +169,34 @@ class PaymentService {
                     }
                 }
             );
-
+    
+            console.log('Ответ Rukassa:', response.data);
+    
             if (response.data.error) {
+                if (response.data.error.includes('method is not activated')) {
+                    throw new Error(`Способ оплаты ${currency} временно недоступен. Пожалуйста, выберите другой способ оплаты.`);
+                }
                 throw new Error(response.data.message || response.data.error);
             }
-
+    
             const paymentUrl = response.data.url || response.data.link;
             if (!paymentUrl) {
                 throw new Error('Не удалось получить ссылку на оплату');
             }
-
+    
             return paymentUrl;
         } catch (error) {
             await db.deletePayment(merchantOrderId);
+            
+            if (axios.isAxiosError(error)) {
+                const errorMessage = error.response?.data?.message || error.response?.data?.error || 'Сервис оплаты временно недоступен';
+                console.error('Ошибка API Rukassa:', {
+                    status: error.response?.status,
+                    data: error.response?.data
+                });
+                throw new Error(`Ошибка оплаты: ${errorMessage}`);
+            }
+            
             throw error;
         }
     }
