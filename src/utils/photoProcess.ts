@@ -4,7 +4,6 @@ import { db } from '../services/database';
 import { imageProcessor } from '../services/imageProcess';
 import { sendMessage } from './messages';
 import { getMainKeyboard } from './keyboard';
-import { PATHS } from '../config/environment';
 import { MESSAGES } from './messages';
 
 export async function processPhotoMessage(ctx: Context): Promise<void> {
@@ -26,8 +25,7 @@ export async function processPhotoMessage(ctx: Context): Promise<void> {
         if (credits <= 0) {
             await sendMessage(
                 ctx,
-                PATHS.ASSETS.PAYMENT,
-                'У вас закончились кредиты. Используйте команду /buy для покупки дополнительных кредитов.',
+                MESSAGES.ERRORS.INSUFFICIENT_CREDITS,
                 getMainKeyboard()
             );
             return;
@@ -35,7 +33,6 @@ export async function processPhotoMessage(ctx: Context): Promise<void> {
 
         await sendMessage(
             ctx,
-            PATHS.ASSETS.PAYMENT_PROCESS,
             '⚠️ Важные правила:\n\n' +
             '1. Изображение должно содержать только людей старше 18 лет\n' +
             '2. Убедитесь, что на фото чётко видно лицо\n' +
@@ -55,7 +52,6 @@ export async function processPhotoMessage(ctx: Context): Promise<void> {
                 await db.updateUserCredits(userId, -1);
                 await sendMessage(
                     ctx,
-                    PATHS.ASSETS.PAYMENT_PROCESS,
                     '✅ Изображение принято на обработку:\n' +
                     `🕒 Время в очереди: ${result.queueTime} сек\n` +
                     `📊 Позиция в очереди: ${result.queueNum}\n` +
@@ -80,8 +76,8 @@ export async function processPhotoMessage(ctx: Context): Promise<void> {
             
             if (error.message === 'AGE_RESTRICTION') {
                 errorMessage = MESSAGES.ERRORS.AGE_RESTRICTION;
-            } else if (error.message === 'INSUFFICIENT_BALANCE') {
-                errorMessage = MESSAGES.ERRORS.INSUFFICIENT_BALANCE;
+            } else if (error.message === 'INSUFFICIENT_CREDITS') {
+                errorMessage = MESSAGES.ERRORS.INSUFFICIENT_CREDITS;
             } else {
                 errorMessage += `\n${error.message}`;
             }
@@ -89,7 +85,6 @@ export async function processPhotoMessage(ctx: Context): Promise<void> {
 
         await sendMessage(
             ctx,
-            PATHS.ASSETS.PAYMENT,
             errorMessage,
             getMainKeyboard()
         );

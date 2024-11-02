@@ -1,7 +1,6 @@
 export const MENU_ACTIONS = {
     BUY_CREDITS: '💳 Купить кредиты',
     CHECK_BALANCE: '💰 Баланс',
-    INFORMATION: 'ℹ️ Информация',
     HELP: '❓ Помощь',
     BACK: '◀️ Назад',
     ACCEPT_RULES: '✅ Принимаю правила',
@@ -9,14 +8,10 @@ export const MENU_ACTIONS = {
 } as const;
 
 export const ADMIN_ACTIONS = {
-    BROADCAST: '📢 Рассылка',
-    SCHEDULE: '🕒 Отложенная рассылка',
-    STATS: '📊 Статистика',
-    CANCEL_BROADCAST: '❌ Отменить рассылку'
+    STATS: '📊 Статистика'
 } as const;
 
 export const API_CONFIG = {
-    RULES_URL: 'https://telegra.ph/Polzovatelskoe-Soglashenie-Photowombot-10-30',
     RUKASSA_API_URL: 'https://lk.rukassa.pro/api/v1/create',
     CLOTHOFF_API_URL: 'https://public-api.clothoff.net'
 } as const;
@@ -25,5 +20,6 @@ export const CURRENCY_RATES = {
     RUB: 1,
     KZT: 0.21,
     UZS: 0.0075,
-    CRYPTO: 95
+    CRYPTO: 95,
+    RUB_SBP: 1
 } as const;
