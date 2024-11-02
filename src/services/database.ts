@@ -423,6 +423,165 @@ class DatabaseService {
             throw error;
         }
     }
+    // Методы для работы с кредитами пользователя
+    async updateUserCredits(userId: number, credits: number): Promise<void> {
+        try {
+            await this.withTransaction(async (client) => {
+                const currentBalance = await client.query(
+                    'SELECT credits FROM users WHERE user_id = $1 FOR UPDATE',
+                    [userId]
+                );
+
+                if (currentBalance.rows[0].credits + credits < 0) {
+                    throw new TransactionError('Недостаточно кредитов');
+                }
+
+                await client.query(
+                    `UPDATE users 
+                     SET credits = credits + $1, 
+                         last_used = CURRENT_TIMESTAMP 
+                     WHERE user_id = $2`,
+                    [credits, userId]
+                );
+
+                logger.info('Обновлены кредиты пользователя:', {
+                    userId,
+                    credits,
+                    newBalance: currentBalance.rows[0].credits + credits
+                });
+            });
+        } catch (error) {
+            logger.error('Ошибка при обновлении кредитов:', error);
+            throw error;
+        }
+    }
+
+    // Методы для работы с задачами обработки
+    async setUserPendingTask(userId: number, taskId: string | null): Promise<void> {
+        try {
+            await this.pool.query(
+                'UPDATE users SET pending_task_id = $1 WHERE user_id = $2',
+                [taskId, userId]
+            );
+            logger.info('Обновлена pending задача:', { userId, taskId });
+        } catch (error) {
+            logger.error('Ошибка при установке pending задачи:', error);
+            throw error;
+        }
+    }
+
+    async getUserByPendingTask(taskId: string): Promise<User | null> {
+        try {
+            const result = await this.pool.query<User>(
+                'SELECT * FROM users WHERE pending_task_id = $1',
+                [taskId]
+            );
+            return result.rows[0] || null;
+        } catch (error) {
+            logger.error('Ошибка при поиске пользователя по taskId:', error);
+            throw error;
+        }
+    }
+
+    // Методы для работы с рефералами
+    async addReferral(userId: number, referrerId: number): Promise<void> {
+        try {
+            await this.withTransaction(async (client) => {
+                // Проверяем существование реферера
+                const referrer = await client.query(
+                    'SELECT user_id FROM users WHERE user_id = $1',
+                    [referrerId]
+                );
+
+                if (referrer.rows.length === 0) {
+                    throw new TransactionError('Реферер не найден');
+                }
+
+                // Проверяем, что у пользователя еще нет реферера
+                const user = await client.query(
+                    'SELECT referrer_id FROM users WHERE user_id = $1',
+                    [userId]
+                );
+
+                if (user.rows[0]?.referrer_id) {
+                    throw new TransactionError('У пользователя уже есть реферер');
+                }
+
+                await client.query(
+                    'UPDATE users SET referrer_id = $1 WHERE user_id = $2 AND referrer_id IS NULL',
+                    [referrerId, userId]
+                );
+
+                logger.info('Добавлен реферал:', { userId, referrerId });
+            });
+        } catch (error) {
+            logger.error('Ошибка при добавлении реферала:', error);
+            throw error;
+        }
+    }
+
+    async getReferralStats(userId: number): Promise<{ count: number; earnings: number }> {
+        try {
+            const result = await this.pool.query(`
+                SELECT 
+                    COUNT(DISTINCT u.user_id) as count,
+                    COALESCE(SUM(u.referral_earnings), 0) as earnings
+                FROM users u
+                WHERE u.referrer_id = $1
+            `, [userId]);
+
+            return {
+                count: parseInt(result.rows[0].count),
+                earnings: parseFloat(result.rows[0].earnings)
+            };
+        } catch (error) {
+            logger.error('Ошибка при получении реферальной статистики:', error);
+            throw error;
+        }
+    }
+
+    async processReferralPayment(paymentId: number): Promise<void> {
+        try {
+            await this.withTransaction(async (client) => {
+                const payment = await client.query(
+                    'SELECT user_id, amount FROM payments WHERE id = $1 AND status = \'paid\'',
+                    [paymentId]
+                );
+
+                if (payment.rows.length > 0) {
+                    const referral = await client.query(
+                        'SELECT referrer_id FROM users WHERE user_id = $1',
+                        [payment.rows[0].user_id]
+                    );
+
+                    if (referral.rows[0]?.referrer_id) {
+                        const referralAmount = payment.rows[0].amount * 0.5;
+                        
+                        await client.query(
+                            'UPDATE users SET referral_earnings = referral_earnings + $1 WHERE user_id = $2',
+                            [referralAmount, referral.rows[0].referrer_id]
+                        );
+
+                        await client.query(
+                            `INSERT INTO referral_transactions 
+                             (referrer_id, referral_id, amount, payment_id, status) 
+                             VALUES ($1, $2, $3, $4, 'completed')`,
+                            [referral.rows[0].referrer_id, payment.rows[0].user_id, referralAmount, paymentId]
+                        );
+
+                        logger.info('Обработан реферальный платеж:', {
+                            paymentId,
+                            referrerId: referral.rows[0].referrer_id,
+                            amount: referralAmount
+                        });
+                    }
+                }
+            });
+        } catch (error) {
+            logger.error('Ошибка при обработке реферального платежа:', error);
+            throw error;
+        }
+    }
 
     // Служебные методы
     async close(): Promise<void> {
