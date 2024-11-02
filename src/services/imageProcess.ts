@@ -6,7 +6,7 @@ import { db } from './database';
 import { Telegram } from 'telegraf';
 import { logger } from '../index';
 import { promisify } from 'util';
-import { fileTypeFromBuffer } from 'file-type';
+//import { fileTypeFromBuffer } from 'file-type';
 
 class ImageProcessService {
     private readonly MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
@@ -63,10 +63,10 @@ class ImageProcessService {
         }
 
         // Проверка формата
-        const fileType = await fileTypeFromBuffer(imageBuffer);
-        if (!fileType || !this.ALLOWED_MIME_TYPES.includes(fileType.mime)) {
-            throw new Error('Неподдерживаемый формат изображения. Разрешены только JPEG, PNG и WebP');
-        }
+       // const fileType = await fileTypeFromBuffer(imageBuffer);
+       // if (!fileType || !this.ALLOWED_MIME_TYPES.includes(fileType.mime)) {
+       //     throw new Error('Неподдерживаемый формат изображения. Разрешены только JPEG, PNG и WebP');
+      //  }
 
         // Здесь можно добавить проверку размеров изображения через sharp или другую библиотеку
     }
