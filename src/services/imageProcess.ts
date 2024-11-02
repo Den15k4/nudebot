@@ -5,16 +5,12 @@ import { ApiResponse, ProcessingResult } from '../types/interfaces';
 import { db } from './database';
 import { Telegram } from 'telegraf';
 import { logger } from '../index';
-import { promisify } from 'util';
-import * as FileType from 'file-type';
 
 class ImageProcessService {
     private readonly MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
     private readonly MAX_RETRY_ATTEMPTS = 3;
     private readonly RETRY_DELAY = 2000; // 2 seconds
     private readonly ALLOWED_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
-    private readonly MIN_IMAGE_DIMENSION = 100;
-    private readonly MAX_IMAGE_DIMENSION = 4096;
 
     private apiClient = axios.create({
         baseURL: 'https://public-api.clothoff.net',
@@ -22,7 +18,7 @@ class ImageProcessService {
             'accept': 'application/json',
             'x-api-key': ENV.CLOTHOFF_API_KEY
         },
-        timeout: 120000
+        timeout: ENV.API_TIMEOUT || 120000
     });
 
     constructor() {
@@ -55,15 +51,56 @@ class ImageProcessService {
         );
     }
 
-    private async validateImage(imageBuffer: Buffer): Promise<void> {
+    // Проверка Magic Numbers для разных форматов изображений
+    private isImageBuffer(buffer: Buffer): boolean {
+        const signatures = {
+            // JPEG
+            jpeg: [
+                [0xFF, 0xD8, 0xFF],
+            ],
+            // PNG
+            png: [
+                [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A],
+            ],
+            // WebP
+            webp: [
+                [0x52, 0x49, 0x46, 0x46], // RIFF
+            ],
+        };
+
+        // Проверяем JPEG
+        if (signatures.jpeg.some(sig => 
+            sig.every((byte, i) => buffer[i] === byte)
+        )) {
+            return true;
+        }
+
+        // Проверяем PNG
+        if (signatures.png.some(sig => 
+            sig.every((byte, i) => buffer[i] === byte)
+        )) {
+            return true;
+        }
+
+        // Проверяем WebP
+        if (signatures.webp.some(sig => 
+            sig.every((byte, i) => buffer[i] === byte)
+        )) {
+            return true;
+        }
+
+        return false;
+    }
+
+    // Проверка размера и формата изображения
+    private validateImage(imageBuffer: Buffer): void {
         // Проверка размера
         if (imageBuffer.length > this.MAX_FILE_SIZE) {
             throw new Error(`Размер файла превышает ${this.MAX_FILE_SIZE / 1024 / 1024}MB`);
         }
 
-        // Проверка формата
-        const fileType = await FileType.fromBuffer(imageBuffer);
-        if (!fileType || !this.ALLOWED_MIME_TYPES.includes(fileType.mime)) {
+        // Проверка формата по magic numbers
+        if (!this.isImageBuffer(imageBuffer)) {
             throw new Error('Неподдерживаемый формат изображения. Разрешены только JPEG, PNG и WebP');
         }
     }
@@ -94,11 +131,10 @@ class ImageProcessService {
         }
     }
 
-    // Основной метод обработки изображения
     async processImage(imageBuffer: Buffer, userId: number): Promise<ProcessingResult> {
         try {
             // Валидация изображения
-            await this.validateImage(imageBuffer);
+            this.validateImage(imageBuffer);
 
             const formData = new FormData();
             const id_gen = `user_${userId}_${Date.now()}`;
@@ -124,13 +160,12 @@ class ImageProcessService {
                         'x-api-key': ENV.CLOTHOFF_API_KEY
                     },
                     maxBodyLength: Infinity,
-                    timeout: 120000
+                    timeout: ENV.API_TIMEOUT || 120000
                 });
             });
             
             const apiResponse: ApiResponse = response.data;
             
-            // Расширенная обработка ошибок
             if (apiResponse.error) {
                 if (apiResponse.error === 'Insufficient balance') {
                     throw new Error('INSUFFICIENT_BALANCE');
@@ -141,12 +176,12 @@ class ImageProcessService {
                 }
                 throw new Error(`API Error: ${apiResponse.error}`);
             }
-            
+
             // Проверяем наличие обязательных полей в ответе
             if (!apiResponse.queue_time && !apiResponse.queue_num) {
                 throw new Error('Некорректный ответ от API');
             }
-
+            
             await db.setUserPendingTask(userId, id_gen);
             
             logger.info('Изображение успешно отправлено на обработку:', {
@@ -155,7 +190,7 @@ class ImageProcessService {
                 queueTime: apiResponse.queue_time,
                 queuePosition: apiResponse.queue_num
             });
-
+            
             return {
                 queueTime: apiResponse.queue_time,
                 queueNum: apiResponse.queue_num,
@@ -167,17 +202,14 @@ class ImageProcessService {
                 userId,
                 error: error instanceof Error ? error.message : 'Unknown error'
             });
-
+            
             if (axios.isAxiosError(error)) {
-                if (error.response?.data) {
-                    if (error.response.data.error === 'Insufficient balance') {
-                        throw new Error('INSUFFICIENT_BALANCE');
-                    }
-                    if (error.response.data.error.includes('Age') || 
-                        error.response.data.age === 'young') {
-                        throw new Error('AGE_RESTRICTION');
-                    }
-                    throw new Error(`API Error: ${error.response.data.error || 'Unknown error'}`);
+                if (error.response?.data?.error === 'Insufficient balance') {
+                    throw new Error('INSUFFICIENT_BALANCE');
+                }
+                if (error.response?.data?.error?.includes('Age') || 
+                    error.response?.data?.age === 'young') {
+                    throw new Error('AGE_RESTRICTION');
                 }
                 throw new Error(`Network error: ${error.message}`);
             }
@@ -185,7 +217,6 @@ class ImageProcessService {
         }
     }
 
-    // Загрузка файла из Telegram
     async downloadTelegramFile(fileId: string, telegram: Telegram): Promise<Buffer> {
         try {
             logger.info('Начало загрузки файла из Telegram:', { fileId });
@@ -207,7 +238,7 @@ class ImageProcessService {
                     `https://api.telegram.org/file/bot${ENV.BOT_TOKEN}/${file.file_path}`,
                     { 
                         responseType: 'arraybuffer',
-                        timeout: 30000
+                        timeout: ENV.API_TIMEOUT || 30000
                     }
                 );
             });
@@ -215,7 +246,7 @@ class ImageProcessService {
             const buffer = Buffer.from(response.data);
             
             // Проверяем размер и формат загруженного файла
-            await this.validateImage(buffer);
+            this.validateImage(buffer);
 
             logger.info('Файл успешно загружен:', {
                 fileId,
@@ -225,7 +256,7 @@ class ImageProcessService {
 
             return buffer;
         } catch (error) {
-            logger.error('Ошибка при загрузке файла из Telegram:', {
+            logger.error('Ошибка при загрузке файла:', {
                 fileId,
                 error: error instanceof Error ? error.message : 'Unknown error'
             });
@@ -237,19 +268,13 @@ class ImageProcessService {
         }
     }
 
-    // Метод очистки задач
+    // Метод очистки устаревших задач
     async cleanupPendingTasks(olderThanHours: number = 24): Promise<void> {
         try {
-            const result = await db.pool.query(
-                `UPDATE users 
-                 SET pending_task_id = NULL 
-                 WHERE pending_task_id IS NOT NULL 
-                 AND last_used < NOW() - INTERVAL '${olderThanHours} hours'`
-            );
-            
-            logger.info(`Очищено ${result.rowCount} зависших задач`);
+            await db.cleanupOldTasks(olderThanHours);
+            logger.info(`Выполнена очистка задач старше ${olderThanHours} часов`);
         } catch (error) {
-            logger.error('Ошибка при очистке зависших задач:', error);
+            logger.error('Ошибка при очистке устаревших задач:', error);
         }
     }
 }
