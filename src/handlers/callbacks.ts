@@ -47,15 +47,13 @@ async function handleAdminCallbacks(ctx: Context, action: string): Promise<void>
 async function handleCurrencySelection(ctx: Context, userId: number, currency: SupportedCurrency): Promise<boolean> {
     try {
         const packages = paymentService.getAvailablePackages(currency);
-        if (packages.length === 0) {
-            return false;
-        }
+        if (packages.length === 0) return false;
 
         const buttons = packages.map(pkg => [{
             text: `${pkg.description} - ${pkg.prices[currency]} ${currency}`,
             callback_data: `buy_${pkg.id}_${currency}`
         }]);
-
+        
         buttons.push([{
             text: '◀️ Назад',
             callback_data: 'action_back'
@@ -115,9 +113,7 @@ export async function handleCallbacks(ctx: Context): Promise<void> {
     const action = ctx.callbackQuery.data;
     const userId = ctx.from?.id;
 
-    if (!userId) {
-        return;
-    }
+    if (!userId) return;
 
     try {
         await ctx.answerCbQuery();
@@ -169,7 +165,7 @@ export async function handleCallbacks(ctx: Context): Promise<void> {
 
             case 'action_balance': {
                 const credits = await db.checkCredits(userId);
-                const stats = await db.getPhotoStats(userId);
+                const stats = await db.getUserPhotoStats(userId);
                 await sendMessage(
                     ctx,
                     `💳 Ваш баланс: ${credits} кредитов\n\n` +
@@ -222,7 +218,7 @@ export async function handleCallbacks(ctx: Context): Promise<void> {
 
             case 'action_accept_rules': {
                 try {
-                    await db.updateAcceptedRules(userId);
+                    await db.hasAcceptedRules(userId);
                     await sendMessage(
                         ctx,
                         MESSAGES.RULES_ACCEPTED,

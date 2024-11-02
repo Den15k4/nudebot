@@ -75,7 +75,7 @@ export async function handleCredits(ctx: Context): Promise<void> {
         if (!ctx.from) return;
         
         const credits = await db.checkCredits(ctx.from.id);
-        const stats = await db.getPhotoStats(ctx.from.id);
+        const stats = await db.getUserPhotoStats(ctx.from.id);
         await sendMessage(
             ctx,
             `💳 У вас ${credits} кредитов\n\n` +
@@ -112,8 +112,7 @@ export async function handleAcceptRules(ctx: Context): Promise<void> {
     try {
         if (!ctx.from) return;
 
-        await db.updateAcceptedRules(ctx.from.id);
-        
+        await db.hasAcceptedRules(ctx.from.id);
         await sendMessage(
             ctx,
             MESSAGES.RULES_ACCEPTED,
