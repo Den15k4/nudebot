@@ -1,17 +1,58 @@
-import { Pool } from 'pg';
+import { Pool, PoolClient } from 'pg';
 import { ENV } from '../config/environment';
-import { User, Payment, PhotoStats, AdminStats } from '../types/interfaces';
+import { User, Payment, PhotoStats, AdminStats, TransactionError } from '../types/interfaces';
+import { logger } from '../index';
 
 class DatabaseService {
     public pool: Pool;
+    private readonly RETRY_ATTEMPTS = 3;
+    private readonly RETRY_DELAY = 1000; // 1 секунда
 
     constructor() {
         this.pool = new Pool({
             connectionString: ENV.DATABASE_URL,
             ssl: {
                 rejectUnauthorized: false
-            }
+            },
+            max: 20, // максимум соединений
+            idleTimeoutMillis: 30000, // timeout неактивного соединения
+            connectionTimeoutMillis: 2000 // timeout подключения
         });
+
+        // Обработка ошибок пула
+        this.pool.on('error', (err) => {
+            logger.error('Unexpected error on idle client', err);
+        });
+    }
+
+    // Вспомогательная функция для выполнения транзакций с повторными попытками
+    private async withTransaction<T>(
+        callback: (client: PoolClient) => Promise<T>
+    ): Promise<T> {
+        const client = await this.pool.connect();
+        let attempts = 0;
+        
+        while (attempts < this.RETRY_ATTEMPTS) {
+            try {
+                await client.query('BEGIN');
+                const result = await callback(client);
+                await client.query('COMMIT');
+                return result;
+            } catch (error) {
+                await client.query('ROLLBACK');
+                
+                if (error instanceof TransactionError || attempts === this.RETRY_ATTEMPTS - 1) {
+                    throw error;
+                }
+                
+                attempts++;
+                await new Promise(resolve => setTimeout(resolve, this.RETRY_DELAY));
+            } finally {
+                client.release();
+            }
+        }
+        
+        throw new Error('Превышено максимальное количество попыток транзакции');
     }
 
     async initTables(): Promise<void> {
@@ -19,7 +60,7 @@ class DatabaseService {
         try {
             await client.query('BEGIN');
 
-            // Основная таблица пользователей с новыми полями
+            // Основная таблица пользователей
             await client.query(`
                 CREATE TABLE IF NOT EXISTS users (
                     user_id BIGINT PRIMARY KEY,
@@ -35,6 +76,12 @@ class DatabaseService {
                     total_spent DECIMAL DEFAULT 0,
                     last_notification_read TIMESTAMPTZ
                 );
+                
+                -- Индексы для оптимизации
+                CREATE INDEX IF NOT EXISTS idx_users_last_used ON users(last_used);
+                CREATE INDEX IF NOT EXISTS idx_users_referrer ON users(referrer_id);
+                CREATE INDEX IF NOT EXISTS idx_users_pending_task ON users(pending_task_id);
+                CREATE INDEX IF NOT EXISTS idx_users_created_at ON users(created_at);
             `);
 
             // Таблица платежей
@@ -49,8 +96,15 @@ class DatabaseService {
                     status TEXT,
                     currency TEXT,
                     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+                    updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                    payment_method TEXT,
+                    error_message TEXT
                 );
+                
+                -- Индексы для платежей
+                CREATE INDEX IF NOT EXISTS idx_payments_user_id ON payments(user_id);
+                CREATE INDEX IF NOT EXISTS idx_payments_status ON payments(status);
+                CREATE INDEX IF NOT EXISTS idx_payments_created_at ON payments(created_at);
             `);
 
             // Таблица реферальных транзакций
@@ -61,8 +115,15 @@ class DatabaseService {
                     referral_id BIGINT REFERENCES users(user_id),
                     amount DECIMAL,
                     payment_id INTEGER REFERENCES payments(id),
-                    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+                    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+                    status TEXT DEFAULT 'pending',
+                    processed_at TIMESTAMPTZ
                 );
+                
+                -- Индексы для рефералов
+                CREATE INDEX IF NOT EXISTS idx_ref_trans_referrer ON referral_transactions(referrer_id);
+                CREATE INDEX IF NOT EXISTS idx_ref_trans_referral ON referral_transactions(referral_id);
+                CREATE INDEX IF NOT EXISTS idx_ref_trans_status ON referral_transactions(status);
             `);
 
             // Таблица истории обработки фото
@@ -74,452 +135,295 @@ class DatabaseService {
                     success BOOLEAN,
                     error_message TEXT,
                     processing_time INTEGER,
-                    credits_used INTEGER DEFAULT 1
+                    credits_used INTEGER DEFAULT 1,
+                    original_file_size BIGINT,
+                    result_file_size BIGINT,
+                    api_response_code TEXT
                 );
-            `);
-
-            // Таблица специальных предложений
-            await client.query(`
-                CREATE TABLE IF NOT EXISTS special_offers (
-                    id SERIAL PRIMARY KEY,
-                    title TEXT NOT NULL,
-                    description TEXT NOT NULL,
-                    discount_percent INTEGER,
-                    start_date TIMESTAMPTZ NOT NULL,
-                    end_date TIMESTAMPTZ NOT NULL,
-                    is_active BOOLEAN DEFAULT true,
-                    min_credits INTEGER,
-                    extra_credits INTEGER,
-                    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-                );
-            `);
-
-            // Таблица для отслеживания уведомлений
-            await client.query(`
-                CREATE TABLE IF NOT EXISTS notifications (
-                    id SERIAL PRIMARY KEY,
-                    type TEXT NOT NULL,
-                    title TEXT NOT NULL,
-                    message TEXT NOT NULL,
-                    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-                    scheduled_for TIMESTAMPTZ,
-                    sent_at TIMESTAMPTZ,
-                    special_offer_id INTEGER REFERENCES special_offers(id),
-                    is_sent BOOLEAN DEFAULT false
-                );
-            `);
-
-            // Таблица рассылок
-            await client.query(`
-                CREATE TABLE IF NOT EXISTS scheduled_broadcasts (
-                    id TEXT PRIMARY KEY,
-                    message TEXT NOT NULL,
-                    image_path TEXT,
-                    scheduled_time TIMESTAMPTZ NOT NULL,
-                    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
-                );
-            `);
-
-            // Таблица для бэкапов
-            await client.query(`
-                CREATE TABLE IF NOT EXISTS backup_history (
-                    id SERIAL PRIMARY KEY,
-                    filename TEXT NOT NULL,
-                    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-                    size_bytes BIGINT,
-                    status TEXT,
-                    error_message TEXT,
-                    storage_path TEXT
-                );
+                
+                -- Индексы для истории обработки
+                CREATE INDEX IF NOT EXISTS idx_photo_user_id ON photo_processing_history(user_id);
+                CREATE INDEX IF NOT EXISTS idx_photo_processed_at ON photo_processing_history(processed_at);
+                CREATE INDEX IF NOT EXISTS idx_photo_success ON photo_processing_history(success);
             `);
 
             await client.query('COMMIT');
+            logger.info('Таблицы базы данных успешно инициализированы');
         } catch (error) {
             await client.query('ROLLBACK');
+            logger.error('Ошибка при инициализации таблиц:', error);
             throw error;
         } finally {
             client.release();
         }
     }
 
-    // Методы для работы с пользователями
+    // Методы работы с пользователями
     async addUser(userId: number, username?: string): Promise<void> {
-        await this.pool.query(
-            'INSERT INTO users (user_id, username, credits, accepted_rules) VALUES ($1, $2, 0, FALSE) ON CONFLICT (user_id) DO NOTHING',
-            [userId, username || 'anonymous']
-        );
+        try {
+            await this.withTransaction(async (client) => {
+                const result = await client.query(
+                    'SELECT user_id FROM users WHERE user_id = $1',
+                    [userId]
+                );
+
+                if (result.rows.length === 0) {
+                    await client.query(
+                        `INSERT INTO users (user_id, username, credits, accepted_rules) 
+                         VALUES ($1, $2, 0, FALSE)`,
+                        [userId, username || 'anonymous']
+                    );
+                    logger.info(`Добавлен новый пользователь: ${userId}`);
+                }
+            });
+        } catch (error) {
+            logger.error('Ошибка при добавлении пользователя:', error);
+            throw error;
+        }
     }
 
+    // Методы проверки и обновления статуса пользователя
     async hasAcceptedRules(userId: number): Promise<boolean> {
-        const result = await this.pool.query(
-            'SELECT accepted_rules FROM users WHERE user_id = $1',
-            [userId]
-        );
-        return result.rows[0]?.accepted_rules || false;
+        try {
+            const result = await this.pool.query(
+                'SELECT accepted_rules FROM users WHERE user_id = $1',
+                [userId]
+            );
+            return result.rows[0]?.accepted_rules || false;
+        } catch (error) {
+            logger.error('Ошибка при проверке правил:', error);
+            throw error;
+        }
     }
 
     async getAllUsers(): Promise<{ user_id: number }[]> {
-        const result = await this.pool.query(
-            'SELECT user_id FROM users WHERE accepted_rules = TRUE'
-        );
-        return result.rows;
+        try {
+            const result = await this.pool.query(
+                'SELECT user_id FROM users WHERE accepted_rules = TRUE'
+            );
+            return result.rows;
+        } catch (error) {
+            logger.error('Ошибка при получении списка пользователей:', error);
+            throw error;
+        }
     }
 
     async checkCredits(userId: number): Promise<number> {
-        const result = await this.pool.query(
-            'SELECT credits FROM users WHERE user_id = $1',
-            [userId]
-        );
-        return result.rows[0]?.credits || 0;
+        try {
+            const result = await this.pool.query(
+                'SELECT credits FROM users WHERE user_id = $1',
+                [userId]
+            );
+            return result.rows[0]?.credits || 0;
+        } catch (error) {
+            logger.error('Ошибка при проверке кредитов:', error);
+            throw error;
+        }
     }
 
     async updateUserCredits(userId: number, credits: number): Promise<void> {
-        await this.pool.query(
-            'UPDATE users SET credits = credits + $1, last_used = CURRENT_TIMESTAMP WHERE user_id = $2',
-            [credits, userId]
-        );
+        try {
+            await this.withTransaction(async (client) => {
+                // Проверяем текущий баланс
+                const currentBalance = await client.query(
+                    'SELECT credits FROM users WHERE user_id = $1 FOR UPDATE',
+                    [userId]
+                );
+
+                if (currentBalance.rows[0].credits + credits < 0) {
+                    throw new TransactionError('Недостаточно кредитов');
+                }
+
+                await client.query(
+                    `UPDATE users 
+                     SET credits = credits + $1, 
+                         last_used = CURRENT_TIMESTAMP 
+                     WHERE user_id = $2`,
+                    [credits, userId]
+                );
+
+                // Логируем изменение баланса
+                await client.query(
+                    `INSERT INTO credit_history (user_id, amount, operation_type, balance_after)
+                     VALUES ($1, $2, $3, $4)`,
+                    [
+                        userId,
+                        credits,
+                        credits > 0 ? 'credit' : 'debit',
+                        currentBalance.rows[0].credits + credits
+                    ]
+                );
+            });
+        } catch (error) {
+            logger.error('Ошибка при обновлении кредитов:', error);
+            throw error;
+        }
     }
 
+    // Методы работы с задачами обработки фото
     async setUserPendingTask(userId: number, taskId: string | null): Promise<void> {
-        await this.pool.query(
-            'UPDATE users SET pending_task_id = $1 WHERE user_id = $2',
-            [taskId, userId]
-        );
+        try {
+            await this.withTransaction(async (client) => {
+                await client.query(
+                    'UPDATE users SET pending_task_id = $1 WHERE user_id = $2',
+                    [taskId, userId]
+                );
+
+                if (taskId) {
+                    await client.query(
+                        `INSERT INTO task_history (user_id, task_id, status)
+                         VALUES ($1, $2, 'pending')`,
+                        [userId, taskId]
+                    );
+                }
+            });
+        } catch (error) {
+            logger.error('Ошибка при установке pending task:', error);
+            throw error;
+        }
     }
 
     async getUserByPendingTask(taskId: string): Promise<User | null> {
-        const result = await this.pool.query<User>(
-            'SELECT * FROM users WHERE pending_task_id = $1',
-            [taskId]
-        );
-        return result.rows[0] || null;
+        try {
+            const result = await this.pool.query<User>(
+                'SELECT * FROM users WHERE pending_task_id = $1',
+                [taskId]
+            );
+            return result.rows[0] || null;
+        } catch (error) {
+            logger.error('Ошибка при поиске пользователя по taskId:', error);
+            throw error;
+        }
     }
 
-    // Методы для работы с рефералами
+    // Методы работы с рефералами
     async addReferral(userId: number, referrerId: number): Promise<void> {
-        await this.pool.query(
-            'UPDATE users SET referrer_id = $1 WHERE user_id = $2 AND referrer_id IS NULL',
-            [referrerId, userId]
-        );
-    }
-
-    async getReferralStats(userId: number): Promise<{ count: number; earnings: number }> {
-        const result = await this.pool.query(
-            'SELECT COUNT(*) as count, COALESCE(SUM(referral_earnings), 0) as earnings FROM users WHERE referrer_id = $1',
-            [userId]
-        );
-        return {
-            count: parseInt(result.rows[0].count),
-            earnings: parseFloat(result.rows[0].earnings)
-        };
-    }
-
-    async processReferralPayment(paymentId: number): Promise<void> {
-        const client = await this.pool.connect();
         try {
-            await client.query('BEGIN');
+            await this.withTransaction(async (client) => {
+                // Проверяем, что referrerId существует
+                const referrer = await client.query(
+                    'SELECT user_id FROM users WHERE user_id = $1',
+                    [referrerId]
+                );
 
-            const payment = await client.query(
-                'SELECT user_id, amount FROM payments WHERE id = $1 AND status = \'paid\'',
-                [paymentId]
-            );
+                if (referrer.rows.length === 0) {
+                    throw new TransactionError('Реферер не найден');
+                }
 
-            if (payment.rows.length > 0) {
-                const referral = await client.query(
+                // Проверяем, что у пользователя ещё нет реферера
+                const user = await client.query(
                     'SELECT referrer_id FROM users WHERE user_id = $1',
-                    [payment.rows[0].user_id]
+                    [userId]
                 );
 
-                if (referral.rows[0]?.referrer_id) {
-                    const referralAmount = payment.rows[0].amount * 0.5;
-                    
-                    await client.query(
-                        'UPDATE users SET referral_earnings = referral_earnings + $1 WHERE user_id = $2',
-                        [referralAmount, referral.rows[0].referrer_id]
-                    );
-
-                    await client.query(
-                        'INSERT INTO referral_transactions (referrer_id, referral_id, amount, payment_id) VALUES ($1, $2, $3, $4)',
-                        [referral.rows[0].referrer_id, payment.rows[0].user_id, referralAmount, paymentId]
-                    );
+                if (user.rows[0]?.referrer_id) {
+                    throw new TransactionError('У пользователя уже есть реферер');
                 }
-            }
 
-            await client.query('COMMIT');
-        } catch (error) {
-            await client.query('ROLLBACK');
-            throw error;
-        } finally {
-            client.release();
-        }
-    }
-
-    // Методы для работы с платежами
-    async createPayment(userId: number, merchantOrderId: string, amount: number, credits: number, currency: string): Promise<void> {
-        await this.pool.query(
-            'INSERT INTO payments (user_id, merchant_order_id, amount, credits, status, currency) VALUES ($1, $2, $3, $4, \'pending\', $5)',
-            [userId, merchantOrderId, amount, credits, currency]
-        );
-    }
-
-    async deletePayment(merchantOrderId: string): Promise<void> {
-        await this.pool.query(
-            'DELETE FROM payments WHERE merchant_order_id = $1',
-            [merchantOrderId]
-        );
-    }
-
-    async getPaymentByMerchantId(merchantOrderId: string): Promise<Payment | null> {
-        const result = await this.pool.query<Payment>(
-            'SELECT * FROM payments WHERE merchant_order_id = $1',
-            [merchantOrderId]
-        );
-        return result.rows[0] || null;
-    }
-
-    async updatePaymentStatus(id: number, status: string, orderId: string): Promise<void> {
-        const client = await this.pool.connect();
-        try {
-            await client.query('BEGIN');
-
-            await client.query(
-                'UPDATE payments SET status = $1, order_id = $2, updated_at = CURRENT_TIMESTAMP WHERE id = $3',
-                [status, orderId, id]
-            );
-
-            if (status === 'paid') {
-                const payment = await client.query(
-                    'SELECT user_id, amount FROM payments WHERE id = $1',
-                    [id]
+                // Обновляем информацию о реферере
+                await client.query(
+                    'UPDATE users SET referrer_id = $1 WHERE user_id = $2 AND referrer_id IS NULL',
+                    [referrerId, userId]
                 );
-                
-                if (payment.rows.length > 0) {
-                    await client.query(
-                        'UPDATE users SET total_spent = total_spent + $1 WHERE user_id = $2',
-                        [payment.rows[0].amount, payment.rows[0].user_id]
-                    );
-                }
-            }
 
-            await client.query('COMMIT');
+                // Логируем реферальную связь
+                await client.query(
+                    `INSERT INTO referral_links (referrer_id, referral_id, created_at)
+                     VALUES ($1, $2, CURRENT_TIMESTAMP)`,
+                    [referrerId, userId]
+                );
+            });
         } catch (error) {
-            await client.query('ROLLBACK');
+            logger.error('Ошибка при добавлении реферала:', error);
             throw error;
-        } finally {
-            client.release();
         }
     }
 
-    // Методы для работы со статистикой фото
-    async updatePhotoProcessingStats(
-        userId: number,
-        success: boolean,
-        errorMessage?: string,
-        processingTime?: number
-    ): Promise<void> {
-        const client = await this.pool.connect();
+    // Статистика рефералов
+    async getReferralStats(userId: number): Promise<{ count: number; earnings: number }> {
         try {
-            await client.query('BEGIN');
-
-            await client.query(
-                'UPDATE users SET photos_processed = photos_processed + 1 WHERE user_id = $1',
+            const result = await this.pool.query(
+                `SELECT 
+                    COUNT(DISTINCT u.user_id) as count,
+                    COALESCE(SUM(rt.amount), 0) as earnings
+                 FROM users u
+                 LEFT JOIN referral_transactions rt ON rt.referrer_id = $1
+                 WHERE u.referrer_id = $1`,
                 [userId]
             );
-
-            await client.query(
-                `INSERT INTO photo_processing_history 
-                (user_id, success, error_message, processing_time) 
-                VALUES ($1, $2, $3, $4)`,
-                [userId, success, errorMessage, processingTime]
-            );
-
-            await client.query('COMMIT');
-        } catch (error) {
-            await client.query('ROLLBACK');
-            throw error;
-        } finally {
-            client.release();
-        }
-    }
-
-    async getUserPhotoStats(userId: number): Promise<PhotoStats> {
-        const result = await this.pool.query(`
-            SELECT 
-                COUNT(*) as total_processed,
-                COUNT(CASE WHEN success = true THEN 1 END) as successful_photos,
-                COUNT(CASE WHEN success = false THEN 1 END) as failed_photos,
-                COALESCE(AVG(processing_time), 0) as avg_processing_time
-            FROM photo_processing_history
-            WHERE user_id = $1
-        `, [userId]);
-        
-        return result.rows[0] || {
-            total_processed: 0,
-            successful_photos: 0,
-            failed_photos: 0,
-            avg_processing_time: 0
-        };
-    }
-
-    async updateUserRules(userId: number): Promise<void> {
-        try {
-            await this.pool.query(
-                'UPDATE users SET accepted_rules = true WHERE user_id = $1',
-                [userId]
-            );
-        } catch (error) {
-            console.error('Error updating rules acceptance:', error);
-            throw error;
-        }
-    }
-
-
-    // Расширенные методы статистики
-    async getDetailedStats(): Promise<any> {
-        const [userStats, photoStats, paymentStats, offerStats] = await Promise.all([
-            this.pool.query(`
-                SELECT 
-                    COUNT(*) as total_users,
-                    COUNT(CASE WHEN last_used >= NOW() - INTERVAL '24 hours' THEN 1 END) as active_today,
-                    SUM(credits) as total_credits,
-                    SUM(photos_processed) as total_photos,
-                    SUM(total_spent) as total_revenue
-                FROM users
-                WHERE accepted_rules = true
-            `),
-            this.pool.query(`
-                SELECT 
-                    COUNT(*) as total_processed,
-                    COUNT(CASE WHEN success = true THEN 1 END) as successful,
-                    COUNT(CASE WHEN success = false THEN 1 END) as failed,
-                    AVG(processing_time) as avg_processing_time
-                FROM photo_processing_history
-                WHERE processed_at >= NOW() - INTERVAL '24 hours'
-            `),
-            this.pool.query(`
-                SELECT 
-                    COUNT(*) as total_payments,
-                    SUM(amount) as total_amount,
-                    COUNT(DISTINCT user_id) as unique_users
-                FROM payments
-                WHERE status = 'paid'
-                AND created_at >= NOW() - INTERVAL '24 hours'
-            `),
-            this.pool.query(`
-                SELECT 
-                    COUNT(*) as active_offers,
-                    AVG(discount_percent) as avg_discount
-                FROM special_offers
-                WHERE is_active = true
-                AND start_date <= NOW()
-                AND end_date >= NOW()
-            `)
-        ]);
-
-        return {
-            users: userStats.rows[0],
-            photos: photoStats.rows[0],
-            payments: paymentStats.rows[0],
-            offers: offerStats.rows[0]
-        };
-    }
-
-    async getUserFullStats(userId: number): Promise<any> {
-        const result = await this.pool.query(`
-            SELECT 
-                u.photos_processed,
-                u.total_spent,
-                u.credits,
-                COUNT(DISTINCT ph.id) FILTER (WHERE ph.success = true) as successful_photos,
-                COUNT(DISTINCT ph.id) FILTER (WHERE ph.success = false) as failed_photos,
-                AVG(ph.processing_time) as avg_processing_time,
-                COUNT(DISTINCT p.id) FILTER (WHERE p.status = 'paid') as total_payments,
-                SUM(p.amount) FILTER (WHERE p.status = 'paid') as total_payments_amount,
-                COUNT(DISTINCT ref.user_id) as referrals_count,
-                COALESCE(SUM(u2.total_spent), 0) as referrals_spent
-            FROM users u
-            LEFT JOIN photo_processing_history ph ON ph.user_id = u.user_id
-            LEFT JOIN payments p ON p.user_id = u.user_id
-            LEFT JOIN users ref ON ref.referrer_id = u.user_id
-            LEFT JOIN users u2 ON u2.referrer_id = u.user_id
-            WHERE u.user_id = $1
-            GROUP BY u.user_id, u.photos_processed, u.total_spent, u.credits
-        `, [userId]);
-        return result.rows[0];
-    }
-
-    // Методы для рассылок
-    async getScheduledBroadcasts() {
-        const result = await this.pool.query(`
-            SELECT * FROM scheduled_broadcasts 
-            WHERE scheduled_time > NOW()
-            ORDER BY scheduled_time ASC
-        `);
-        return result.rows;
-    }
-    async getAdminStats(): Promise<AdminStats> {
-        const client = await this.pool.connect();
-        try {
-            // Получаем статистику по пользователям
-            const usersStats = await client.query(`
-                SELECT 
-                    COUNT(DISTINCT u.user_id) as total,
-                    COUNT(DISTINCT CASE 
-                        WHEN u.last_used >= NOW() - INTERVAL '24 hours' 
-                        THEN u.user_id 
-                    END) as active_24h,
-                    COUNT(DISTINCT CASE 
-                        WHEN EXISTS (
-                            SELECT 1 FROM payments p 
-                            WHERE p.user_id = u.user_id AND p.status = 'paid'
-                        ) 
-                        THEN u.user_id 
-                    END) as paid_users
-                FROM users u
-            `);
-    
-            // Получаем статистику по фото
-            const photoStats = await client.query(`
-                SELECT 
-                    COUNT(*) as total_processed,
-                    COUNT(CASE WHEN success = true THEN 1 END) as successful,
-                    COUNT(CASE WHEN success = false THEN 1 END) as failed
-                FROM photo_processing_history
-            `);
-    
-            // Получаем статистику по платежам
-            const paymentStats = await client.query(`
-                SELECT COALESCE(SUM(amount), 0) as total_amount
-                FROM payments 
-                WHERE status = 'paid'
-            `);
-    
             return {
-                users: {
-                    total: parseInt(usersStats.rows[0].total),
-                    active_24h: parseInt(usersStats.rows[0].active_24h),
-                    paid: parseInt(usersStats.rows[0].paid_users)
-                },
-                photos: {
-                    total_processed: parseInt(photoStats.rows[0].total_processed),
-                    successful: parseInt(photoStats.rows[0].successful),
-                    failed: parseInt(photoStats.rows[0].failed)
-                },
-                payments: {
-                    total_amount: parseFloat(paymentStats.rows[0].total_amount)
-                }
+                count: parseInt(result.rows[0].count),
+                earnings: parseFloat(result.rows[0].earnings) || 0
             };
         } catch (error) {
-            console.error('Error getting admin stats:', error);
+            logger.error('Ошибка при получении статистики рефералов:', error);
             throw error;
-        } finally {
-            client.release();
+        }
+    }
+
+    // Обработка реферальных платежей
+    async processReferralPayment(paymentId: number): Promise<void> {
+        try {
+            await this.withTransaction(async (client) => {
+                const payment = await client.query(
+                    `SELECT p.user_id, p.amount, u.referrer_id 
+                     FROM payments p
+                     JOIN users u ON u.user_id = p.user_id
+                     WHERE p.id = $1 AND p.status = 'paid'
+                     FOR UPDATE`,
+                    [paymentId]
+                );
+
+                if (payment.rows.length > 0 && payment.rows[0].referrer_id) {
+                    const referralAmount = payment.rows[0].amount * 0.5;
+                    
+                    // Обновляем баланс реферера
+                    await client.query(
+                        'UPDATE users SET referral_earnings = referral_earnings + $1 WHERE user_id = $2',
+                        [referralAmount, payment.rows[0].referrer_id]
+                    );
+
+                    // Создаем запись о реферальной транзакции
+                    await client.query(
+                        `INSERT INTO referral_transactions 
+                         (referrer_id, referral_id, amount, payment_id, status, processed_at)
+                         VALUES ($1, $2, $3, $4, 'completed', CURRENT_TIMESTAMP)`,
+                        [payment.rows[0].referrer_id, payment.rows[0].user_id, referralAmount, paymentId]
+                    );
+
+                    logger.info('Реферальный платёж обработан:', {
+                        paymentId,
+                        referrerId: payment.rows[0].referrer_id,
+                        amount: referralAmount
+                    });
+                }
+            });
+        } catch (error) {
+            logger.error('Ошибка при обработке реферального платежа:', error);
+            throw error;
         }
     }
 
     // Служебные методы
     async close(): Promise<void> {
-        await this.pool.end();
+        try {
+            await this.pool.end();
+            logger.info('База данных успешно закрыта');
+        } catch (error) {
+            logger.error('Ошибка при закрытии базы данных:', error);
+            throw error;
+        }
+    }
+
+    // Метод для проверки здоровья БД
+    async healthCheck(): Promise<boolean> {
+        try {
+            await this.pool.query('SELECT 1');
+            return true;
+        } catch (error) {
+            logger.error('Ошибка при проверке здоровья БД:', error);
+            return false;
+        }
     }
 }
 
