@@ -1,6 +1,6 @@
 import { Pool } from 'pg';
 import { ENV } from '../config/environment';
-import { User, Payment, SpecialOffer, PhotoStats } from '../types/interfaces';
+import { User, Payment, PhotoStats, AdminStats } from '../types/interfaces';
 
 class DatabaseService {
     public pool: Pool;
@@ -345,139 +345,34 @@ class DatabaseService {
     async getUserPhotoStats(userId: number): Promise<PhotoStats> {
         const result = await this.pool.query(`
             SELECT 
-                u.photos_processed,
-                COUNT(CASE WHEN ph.success = true THEN 1 END) as successful_photos,
-                COUNT(CASE WHEN ph.success = false THEN 1 END) as failed_photos,
-                COALESCE(AVG(ph.processing_time), 0) as avg_processing_time
-            FROM users u
-            LEFT JOIN photo_processing_history ph ON ph.user_id = u.user_id
-            WHERE u.user_id = $1
-            GROUP BY u.user_id, u.photos_processed
+                COUNT(*) as total_processed,
+                COUNT(CASE WHEN success = true THEN 1 END) as successful_photos,
+                COUNT(CASE WHEN success = false THEN 1 END) as failed_photos,
+                COALESCE(AVG(processing_time), 0) as avg_processing_time
+            FROM photo_processing_history
+            WHERE user_id = $1
         `, [userId]);
         
         return result.rows[0] || {
-            photos_processed: 0,
+            total_processed: 0,
             successful_photos: 0,
             failed_photos: 0,
             avg_processing_time: 0
         };
     }
 
-    // Методы для работы со специальными предложениями
-    async createSpecialOffer(offer: SpecialOffer): Promise<number> {
-        const result = await this.pool.query(
-            `INSERT INTO special_offers 
-            (title, description, discount_percent, start_date, end_date, min_credits, extra_credits) 
-            VALUES ($1, $2, $3, $4, $5, $6, $7) 
-            RETURNING id`,
-            [
-                offer.title,
-                offer.description,
-                offer.discountPercent,
-                offer.startDate,
-                offer.endDate,
-                offer.minCredits,
-                offer.extraCredits
-            ]
-        );
-        return result.rows[0].id;
+    async updateUserRules(userId: number): Promise<void> {
+        try {
+            await this.pool.query(
+                'UPDATE users SET accepted_rules = true WHERE user_id = $1',
+                [userId]
+            );
+        } catch (error) {
+            console.error('Error updating rules acceptance:', error);
+            throw error;
+        }
     }
 
-    async getActiveSpecialOffers(): Promise<SpecialOffer[]> {
-        const result = await this.pool.query(`
-            SELECT * FROM special_offers 
-            WHERE is_active = true 
-            AND start_date <= NOW() 
-            AND end_date >= NOW()
-            ORDER BY created_at DESC
-        `);
-        return result.rows;
-    }
-
-    async deactivateSpecialOffer(offerId: number): Promise<void> {
-        await this.pool.query(
-            'UPDATE special_offers SET is_active = false WHERE id = $1',
-            [offerId]
-        );
-    }
-
-    // Методы для работы с уведомлениями
-    async createNotification(notification: {
-        type: string;
-        title: string;
-        message: string;
-        scheduledFor?: Date;
-        specialOfferId?: number;
-    }): Promise<number> {
-        const result = await this.pool.query(
-            `INSERT INTO notifications 
-            (type, title, message, scheduled_for, special_offer_id) 
-            VALUES ($1, $2, $3, $4, $5) 
-            RETURNING id`,
-            [
-                notification.type,
-                notification.title,
-                notification.message,
-                notification.scheduledFor,
-                notification.specialOfferId
-            ]
-        );
-        return result.rows[0].id;
-    }
-
-    async getPendingNotifications(): Promise<any[]> {
-        const result = await this.pool.query(`
-            SELECT * FROM notifications 
-            WHERE is_sent = false 
-            AND (scheduled_for IS NULL OR scheduled_for <= NOW())
-            ORDER BY created_at ASC
-        `);
-        return result.rows;
-    }
-
-    async markNotificationSent(notificationId: number): Promise<void> {
-        await this.pool.query(
-            'UPDATE notifications SET is_sent = true, sent_at = NOW() WHERE id = $1',
-            [notificationId]
-        );
-    }
-
-    async updateUserLastNotificationRead(userId: number): Promise<void> {
-        await this.pool.query(
-            'UPDATE users SET last_notification_read = NOW() WHERE user_id = $1',
-            [userId]
-        );
-    }
-
-    // Методы для работы с бэкапами
-    async recordBackup(backup: {
-        filename: string;
-        sizeBytes: number;
-        storagePath: string;
-        status: string;
-        errorMessage?: string;
-    }): Promise<void> {
-        await this.pool.query(
-            `INSERT INTO backup_history 
-            (filename, size_bytes, storage_path, status, error_message) 
-            VALUES ($1, $2, $3, $4, $5)`,
-            [
-                backup.filename,
-                backup.sizeBytes,
-                backup.storagePath,
-                backup.status,
-                backup.errorMessage
-            ]
-        );
-    }
-
-    async getBackupHistory(limit: number = 10): Promise<any[]> {
-        const result = await this.pool.query(
-            'SELECT * FROM backup_history ORDER BY created_at DESC LIMIT $1',
-            [limit]
-        );
-        return result.rows;
-    }
 
     // Расширенные методы статистики
     async getDetailedStats(): Promise<any> {
