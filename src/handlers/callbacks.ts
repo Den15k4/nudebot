@@ -158,10 +158,11 @@ export async function handleCallbacks(ctx: Context): Promise<void> {
             }
 
             case 'action_buy': {
+                const keyboard = getPaymentKeyboard();
                 await sendMessage(
                     ctx,
                     '💳 Выберите способ оплаты:',
-                    getPaymentKeyboard()
+                    keyboard
                 );
                 break;
             }

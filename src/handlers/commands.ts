@@ -92,10 +92,11 @@ export async function handleCredits(ctx: Context): Promise<void> {
 }
 
 export async function handleBuy(ctx: Context): Promise<void> {
+    const keyboard = getPaymentKeyboard();
     await sendMessage(
         ctx,
         '💳 Выберите способ оплаты:',
-        getPaymentKeyboard()
+        keyboard
     );
 }
 

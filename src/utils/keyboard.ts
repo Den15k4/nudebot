@@ -48,14 +48,16 @@ export function getAdminKeyboard() {
 
 export function getPaymentKeyboard() {
     return {
-        reply_markup: Markup.inlineKeyboard([
-            [{ text: '💳 Visa/MC/MIR', callback_data: 'currency_RUB' }],
-            [{ text: '💳 Visa/MC [KZT]', callback_data: 'currency_KZT' }],
-            [{ text: '💳 Visa/MC [UZS]', callback_data: 'currency_UZS' }],
-            [{ text: '💸 СБП', callback_data: 'currency_RUB_SBP' }],
-            [{ text: '💎 Crypto', callback_data: 'currency_CRYPTO' }],
-            [{ text: '◀️ Назад', callback_data: 'action_back' }]
-        ])
+        reply_markup: {
+            inline_keyboard: [
+                [{ text: '💳 Visa/MC/MIR', callback_data: 'currency_RUB' }],
+                [{ text: '💳 Visa/MC [KZT]', callback_data: 'currency_KZT' }],
+                [{ text: '💳 Visa/MC [UZS]', callback_data: 'currency_UZS' }],
+                [{ text: '💸 СБП', callback_data: 'currency_RUB_SBP' }],
+                [{ text: '💎 Crypto', callback_data: 'currency_CRYPTO' }],
+                [{ text: '◀️ Назад', callback_data: 'action_back' }]
+            ]
+        }
     };
 }
 
