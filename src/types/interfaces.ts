@@ -34,14 +34,6 @@ export interface WebhookBody {
     error?: string;
 }
 
-export interface ScheduledBroadcast {
-    id: string;
-    date: Date;
-    message: string;
-    image?: string;
-    keyboard?: any;
-}
-
 export interface User {
     user_id: number;
     username: string;
@@ -50,9 +42,6 @@ export interface User {
     last_used?: Date;
     pending_task_id?: string;
     accepted_rules: boolean;
-    photos_processed: number;
-    total_spent: number;
-    last_notification_read?: Date;
     referrer_id?: number;
     referral_earnings: number;
 }
@@ -71,22 +60,10 @@ export interface Payment {
 }
 
 export interface PhotoStats {
-    photos_processed: number;
+    total_processed: number;
     successful_photos: number;
     failed_photos: number;
     avg_processing_time: number;
-}
-
-export interface SpecialOffer {
-    id?: number;
-    title: string;
-    description: string;
-    discountPercent: number;
-    startDate: Date;
-    endDate: Date;
-    isActive?: boolean;
-    minCredits?: number;
-    extraCredits?: number;
 }
 
 export interface ReferralTransaction {
@@ -98,69 +75,7 @@ export interface ReferralTransaction {
     payment_id?: number;
 }
 
-export interface BackupRecord {
-    id: number;
-    filename: string;
-    created_at: Date;
-    size_bytes: number;
-    status: string;
-    error_message?: string;
-    storage_path: string;
-}
-
-export interface Notification {
-    id?: number;
-    type: string;
-    title: string;
-    message: string;
-    scheduledFor?: Date;
-    specialOfferId?: number;
-    isSent?: boolean;
-    sentAt?: Date;
-}
-export interface PhotoProcessingStats {
-    date: Date;
-    total_processed: number;
-    successful: number;
-    failed: number;
-    avg_processing_time: number;
-}
-
-export interface PaymentStats {
-    date: Date;
-    total_payments: number;
-    total_amount: number;
-    unique_users: number;
-    average_payment: number;
-}
-
-export interface UserGrowthStats {
-    date: Date;
-    new_users: number;
-    total_users: number;
-}
-
-export interface OfferStats {
-    title: string;
-    discount_percent: number;
-    users_used: number;
-    total_amount_saved: number;
-    total_purchases: number;
-}
-
-export interface TargetedBroadcastOptions {
-    userIds: number[];
-    message: string;
-    image?: Buffer;
-    keyboard?: any;
-}
-
-export interface NotificationTarget {
-    user_id: number;
-    last_notification_read: Date | null;
-}
-
-export type SupportedCurrency = 'RUB' | 'KZT' | 'UZS' | 'CRYPTO';
+export type SupportedCurrency = 'RUB' | 'KZT' | 'UZS' | 'CRYPTO' | 'RUB_SBP';
 
 export interface Currency {
     code: SupportedCurrency;
@@ -177,26 +92,18 @@ export interface PaymentPackage {
     description: string;
 }
 
-export interface DetailedStats {
+export interface AdminStats {
     users: {
-        total_users: number;
-        active_today: number;
-        total_credits: number;
-        total_revenue: number;
+        total: number;
+        active_24h: number;
+        paid: number;
     };
     photos: {
         total_processed: number;
         successful: number;
         failed: number;
-        avg_processing_time: number;
     };
     payments: {
-        total_payments: number;
         total_amount: number;
-        unique_users: number;
-    };
-    offers: {
-        active_offers: number;
-        avg_discount: number;
     };
 }

@@ -2,7 +2,7 @@ import { Context } from 'telegraf';
 import { Message } from 'telegraf/typings/core/types/typegram';
 import { db } from '../services/database';
 import { imageProcessor } from '../services/imageProcess';
-import { sendMessageWithImage } from './messages';
+import { sendMessage } from './messages';
 import { getMainKeyboard } from './keyboard';
 import { PATHS } from '../config/environment';
 import { MESSAGES } from './messages';
@@ -24,7 +24,7 @@ export async function processPhotoMessage(ctx: Context): Promise<void> {
         const credits = await db.checkCredits(userId);
 
         if (credits <= 0) {
-            await sendMessageWithImage(
+            await sendMessage(
                 ctx,
                 PATHS.ASSETS.PAYMENT,
                 'У вас закончились кредиты. Используйте команду /buy для покупки дополнительных кредитов.',
@@ -33,7 +33,7 @@ export async function processPhotoMessage(ctx: Context): Promise<void> {
             return;
         }
 
-        await sendMessageWithImage(
+        await sendMessage(
             ctx,
             PATHS.ASSETS.PAYMENT_PROCESS,
             '⚠️ Важные правила:\n\n' +
@@ -53,7 +53,7 @@ export async function processPhotoMessage(ctx: Context): Promise<void> {
 
             if (result.idGen) {
                 await db.updateUserCredits(userId, -1);
-                await sendMessageWithImage(
+                await sendMessage(
                     ctx,
                     PATHS.ASSETS.PAYMENT_PROCESS,
                     '✅ Изображение принято на обработку:\n' +
@@ -87,7 +87,7 @@ export async function processPhotoMessage(ctx: Context): Promise<void> {
             }
         }
 
-        await sendMessageWithImage(
+        await sendMessage(
             ctx,
             PATHS.ASSETS.PAYMENT,
             errorMessage,

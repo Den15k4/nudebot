@@ -2,7 +2,7 @@ import { Context } from 'telegraf';
 import { MENU_ACTIONS } from '../config/constants';
 import { ENV } from '../config/environment';
 import { db } from '../services/database';
-import { sendMessageWithImage } from '../utils/messages';
+import { sendMessage } from '../utils/messages';
 import { getInitialKeyboard } from '../utils/keyboard';
 import { PATHS } from '../config/environment';
 
@@ -41,9 +41,8 @@ export async function requireAcceptedRules(ctx: Context, next: () => Promise<voi
         if (!accepted) {
             // Отправляем сообщение только если это не callback
             if (!ctx.callbackQuery) {
-                await sendMessageWithImage(
+                await sendMessage(  // было sendMessageWithImage
                     ctx,
-                    PATHS.ASSETS.WELCOME,
                     '⚠️ Для использования бота необходимо принять правила.\n' +
                     'Нажмите на кнопку "Принимаю правила" ниже.',
                     getInitialKeyboard()

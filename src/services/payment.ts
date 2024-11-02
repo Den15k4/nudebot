@@ -9,30 +9,37 @@ export const SUPPORTED_CURRENCIES: Currency[] = [
     { 
         code: 'RUB', 
         symbol: '₽', 
-        name: 'Банковская карта / СБП (RUB)', 
-        method: 'card,sbp',
+        name: 'Visa/MC/MIR', 
+        method: 'CARD',
         minAmount: 300
     },
     { 
         code: 'KZT', 
         symbol: '₸', 
-        name: 'Kaspi / Карта (KZT)', 
-        method: 'card_kzt,kaspi',
+        name: 'Visa/MC [KZT]', 
+        method: 'CARD_KZT',
         minAmount: 32500
     },
     { 
         code: 'UZS', 
         symbol: 'сум', 
-        name: 'CLICK / Карта (UZS)', 
-        method: 'card_uzs,click',
+        name: 'Visa/MC [UZS]', 
+        method: 'CARD_UZS',
         minAmount: 86000
     },
     { 
         code: 'CRYPTO', 
         symbol: 'USDT', 
-        name: 'Криптовалюта (USDT)', 
-        method: 'crypto_usdt',
+        name: 'Crypto', 
+        method: 'CRYPTA',
         minAmount: 3
+    },
+    {
+        code: 'RUB_SBP',
+        symbol: '₽',
+        name: 'СБП',
+        method: 'SBP',
+        minAmount: 300
     }
 ];
 
@@ -44,7 +51,8 @@ export const CREDIT_PACKAGES: PaymentPackage[] = [
             RUB: 300,
             KZT: 0,
             UZS: 0,
-            CRYPTO: 3.00
+            CRYPTO: 3.00,
+            RUB_SBP: 300
         },
         description: '3 генерации'
     },
@@ -55,7 +63,8 @@ export const CREDIT_PACKAGES: PaymentPackage[] = [
             RUB: 600,
             KZT: 58500,
             UZS: 154800,
-            CRYPTO: 6.00
+            CRYPTO: 6.00,
+            RUB_SBP: 600
         },
         description: '7 генераций'
     },
@@ -66,7 +75,8 @@ export const CREDIT_PACKAGES: PaymentPackage[] = [
             RUB: 1200,
             KZT: 108000,
             UZS: 286000,
-            CRYPTO: 12.00
+            CRYPTO: 12.00,
+            RUB_SBP: 1200
         },
         description: '15 генераций'
     },
@@ -77,7 +87,8 @@ export const CREDIT_PACKAGES: PaymentPackage[] = [
             RUB: 2000,
             KZT: 195000,
             UZS: 516000,
-            CRYPTO: 20.00
+            CRYPTO: 20.00,
+            RUB_SBP: 2000
         },
         description: '30 генераций'
     }
@@ -141,14 +152,6 @@ export class PaymentService {
             formData.append('fail_url', `${ENV.WEBHOOK_URL}/payment/fail`);
             formData.append('back_url', `${ENV.WEBHOOK_URL}/payment/back`);
 
-            console.log('Создание платежа с параметрами:', {
-                amount: amountInRubles,
-                method: curr.method,
-                currency: currency,
-                merchantOrderId,
-                user_code: userId
-            });
-
             const response = await axios.post(
                 API_CONFIG.RUKASSA_API_URL,
                 formData,
@@ -161,11 +164,9 @@ export class PaymentService {
                 }
             );
 
-            console.log('Ответ Rukassa:', response.data);
-
             if (response.data.error) {
-                if (response.data.error === '300' && response.data.message === 'client is frozen') {
-                    throw new Error('Оплата временно недоступна. Пожалуйста, попробуйте позже или выберите другой способ оплаты.');
+                if (response.data.error === '300') {
+                    throw new Error(`Способ оплаты "${curr.name}" временно недоступен. Пожалуйста, выберите другой способ оплаты.`);
                 }
                 throw new Error(response.data.message || response.data.error);
             }
@@ -179,36 +180,13 @@ export class PaymentService {
 
         } catch (error) {
             await db.deletePayment(merchantOrderId);
-            
-            if (axios.isAxiosError(error)) {
-                const errorMessage = error.response?.data?.message || 
-                                   error.response?.data?.error || 
-                                   'Сервис оплаты временно недоступен';
-                console.error('Ошибка API Rukassa:', {
-                    status: error.response?.status,
-                    data: error.response?.data,
-                    userId: userId
-                });
-                
-                let userMessage = 'Произошла ошибка при создании платежа. ';
-                if (errorMessage.includes('client is frozen')) {
-                    userMessage += 'Оплата временно недоступна. Пожалуйста, попробуйте позже или выберите другой способ оплаты.';
-                } else {
-                    userMessage += errorMessage;
-                }
-                
-                throw new Error(userMessage);
-            }
-            
             throw error;
         }
     }
 
     async handleWebhook(data: any): Promise<void> {
         try {
-            console.log('Получен webhook от Rukassa:', data);
             const payment = await db.getPaymentByMerchantId(data.merchant_order_id);
-            
             if (!payment) {
                 throw new Error('Платёж не найден');
             }
@@ -217,6 +195,7 @@ export class PaymentService {
 
             if (data.payment_status === 'paid') {
                 await db.updateUserCredits(payment.user_id, payment.credits);
+                await db.processReferralPayment(payment.id);
                 
                 const curr = SUPPORTED_CURRENCIES.find(c => c.code === payment.currency);
                 await this.bot.telegram.sendMessage(

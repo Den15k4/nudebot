@@ -64,8 +64,6 @@ class ImageProcessService {
         }
     }
 
-    
-
     async downloadTelegramFile(fileId: string, telegram: Telegram): Promise<Buffer> {
         const file = await telegram.getFile(fileId);
         if (!file.file_path) {
