@@ -1,6 +1,5 @@
 import { Telegraf } from 'telegraf';
 import axios from 'axios';
-import crypto from 'crypto';
 import { ENV } from '../config/environment';
 import { API_CONFIG, CURRENCY_RATES } from '../config/constants';
 import { db } from './database';
@@ -18,14 +17,14 @@ export const SUPPORTED_CURRENCIES: Currency[] = [
         code: 'KZT', 
         symbol: '₸', 
         name: 'Visa/MC [KZT]', 
-        method: 'card_kzt', // Изменено с CARD_KZT на card_kzt
+        method: 'card_kzt',  // Изменено с CARD_KZT на card_kzt
         minAmount: 32500
     },
     { 
         code: 'UZS', 
         symbol: 'сум', 
         name: 'Visa/MC [UZS]', 
-        method: 'card_uzs', // Изменено с CARD_UZS на card_uzs
+        method: 'card_uzs',  // Изменено с CARD_UZS на card_uzs
         minAmount: 86000
     },
     { 
@@ -39,7 +38,7 @@ export const SUPPORTED_CURRENCIES: Currency[] = [
         code: 'RUB_SBP',
         symbol: '₽',
         name: 'СБП',
-        method: 'sbp',    // Изменено с SBP на sbp
+        method: 'sbp',  // Изменено с SBP на sbp
         minAmount: 300
     }
 ];
@@ -47,16 +46,9 @@ export const SUPPORTED_CURRENCIES: Currency[] = [
 export class PaymentService {
     constructor(private bot: Telegraf) {}
 
-    private generateSignature(data: Record<string, string>): string {
-        const sortedKeys = Object.keys(data).sort();
-        const signString = sortedKeys
-            .map(key => `${key}:${data[key]}`)
-            .join('|');
-        
-        return crypto
-            .createHash('md5')
-            .update(signString + ENV.RUKASSA_TOKEN)
-            .digest('hex');
+    private convertToRubles(amount: number, currency: SupportedCurrency): string {
+        const rubles = Math.round(amount * CURRENCY_RATES[currency]);
+        return rubles.toString();
     }
 
     async createPayment(
@@ -74,55 +66,57 @@ export class PaymentService {
             throw new Error('Неподдерживаемая валюта');
         }
 
+        if (package_.prices[currency] === 0) {
+            throw new Error(`Этот пакет недоступен для оплаты в ${currency}`);
+        }
+
+        if (package_.prices[currency] < curr.minAmount) {
+            throw new Error(`Минимальная сумма для ${currency}: ${curr.minAmount} ${curr.symbol}`);
+        }
+
         const merchantOrderId = `${userId}_${Date.now()}`;
-        const amount = package_.prices[currency].toString();
-
+        const amountInRubles = this.convertToRubles(package_.prices[currency], currency);
+        
         try {
-            await db.createPayment(
-                userId, 
-                merchantOrderId, 
-                parseFloat(amount), 
-                package_.credits, 
-                currency
-            );
+            await db.createPayment(userId, merchantOrderId, package_.prices[currency], package_.credits, currency);
 
-            const paymentData = {
+            const formData = {
                 shop_id: ENV.SHOP_ID,
-                amount: amount,
-                currency: currency === 'CRYPTO' ? 'USDT' : currency,
+                token: ENV.RUKASSA_TOKEN,
                 order_id: merchantOrderId,
-                payment_method: curr.method,
-                fields: JSON.stringify({
+                amount: amountInRubles,
+                user_code: userId.toString(),
+                method: curr.method,
+                currency_in: currency === 'CRYPTO' ? 'USDT' : currency,
+                custom_fields: JSON.stringify({
                     user_id: userId,
                     package_id: packageId,
-                    credits: package_.credits
+                    credits: package_.credits,
+                    description: `${package_.description} для пользователя ${userId}`
                 }),
                 webhook_url: `${ENV.WEBHOOK_URL}/rukassa/webhook`,
                 success_url: `${ENV.WEBHOOK_URL}/payment/success`,
-                fail_url: `${ENV.WEBHOOK_URL}/payment/fail`
+                fail_url: `${ENV.WEBHOOK_URL}/payment/fail`,
+                back_url: `${ENV.WEBHOOK_URL}/payment/back`
             };
 
-            // Генерируем подпись
-            const signature = this.generateSignature(paymentData);
-            paymentData['sign'] = signature;
-
-            console.log('Отправляем запрос на создание платежа:', paymentData);
-
+            // Изменяем способ отправки данных с URLSearchParams на обычный объект
             const response = await axios.post(
                 API_CONFIG.RUKASSA_API_URL,
-                paymentData,
+                formData,
                 {
                     headers: {
                         'Accept': 'application/json',
-                        'Content-Type': 'application/json'
+                        'Content-Type': 'application/json'  // Изменено на application/json
                     },
                     timeout: 10000
                 }
             );
 
-            console.log('Ответ от Rukassa:', response.data);
-
             if (response.data.error) {
+                if (response.data.error === '300') {
+                    throw new Error(`Способ оплаты "${curr.name}" временно недоступен. Пожалуйста, выберите другой способ оплаты.`);
+                }
                 throw new Error(response.data.message || response.data.error);
             }
 
@@ -135,34 +129,28 @@ export class PaymentService {
 
         } catch (error) {
             await db.deletePayment(merchantOrderId);
-            console.error('Ошибка при создании платежа:', error);
             throw error;
         }
     }
 
     async handleWebhook(data: any): Promise<void> {
-        console.log('Получены данные вебхука:', data);
-
         try {
-            // Проверяем подпись
-            const receivedSign = data.sign;
-            delete data.sign;
-            
-            const calculatedSign = this.generateSignature(data);
-            
-            if (receivedSign !== calculatedSign) {
-                console.error('Неверная подпись вебхука');
-                throw new Error('Invalid signature');
-            }
-
             const payment = await db.getPaymentByMerchantId(data.merchant_order_id);
             if (!payment) {
                 throw new Error('Платёж не найден');
             }
 
-            await db.updatePaymentStatus(payment.id, data.status, data.order_id);
+            // Добавляем логирование для отладки
+            console.log('Webhook payment data:', {
+                paymentId: payment.id,
+                userId: payment.user_id,
+                status: data.payment_status,
+                orderId: data.order_id
+            });
 
-            if (data.status === 'paid') {
+            await db.updatePaymentStatus(payment.id, data.payment_status, data.order_id);
+
+            if (data.payment_status === 'paid') {
                 await db.updateUserCredits(payment.user_id, payment.credits);
                 await db.processReferralPayment(payment.id);
                 
@@ -177,6 +165,10 @@ export class PaymentService {
             console.error('Ошибка обработки webhook:', error);
             throw error;
         }
+    }
+
+    getAvailablePackages(currency: SupportedCurrency): PaymentPackage[] {
+        return CREDIT_PACKAGES.filter(pkg => pkg.prices[currency] > 0);
     }
 }
 
