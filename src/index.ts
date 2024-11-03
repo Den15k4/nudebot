@@ -169,12 +169,39 @@ async function processReferral(userId: number, referrerId: number): Promise<void
     try {
         await client.query('BEGIN');
         
+        // Проверяем существование реферера
+        const referrer = await client.query(
+            'SELECT user_id FROM users WHERE user_id = $1',
+            [referrerId]
+        );
+        
+        if (!referrer.rows.length) {
+            throw new Error('Реферер не найден');
+        }
+
         const existingUser = await client.query(
             'SELECT referrer_id FROM users WHERE user_id = $1',
             [userId]
         );
         
+        // Проверяем что пользователь еще не имеет реферера
         if (!existingUser.rows[0]?.referrer_id) {
+            // Проверяем что реферер не является рефералом пользователя
+            const referrerChain = await client.query(
+                'WITH RECURSIVE ref_chain AS (
+                    SELECT user_id, referrer_id FROM users WHERE user_id = $1
+                    UNION
+                    SELECT u.user_id, u.referrer_id FROM users u
+                    INNER JOIN ref_chain rc ON rc.referrer_id = u.user_id
+                )
+                SELECT user_id FROM ref_chain WHERE user_id = $2',
+                [referrerId, userId]
+            );
+
+            if (referrerChain.rows.length > 0) {
+                throw new Error('Циклическая реферальная ссылка');
+            }
+
             await client.query(
                 'UPDATE users SET referrer_id = $1 WHERE user_id = $2',
                 [referrerId, userId]
@@ -185,13 +212,13 @@ async function processReferral(userId: number, referrerId: number): Promise<void
                 [referrerId]
             );
 
+            await client.query('COMMIT');
+            
             await bot.telegram.sendMessage(
                 referrerId,
                 '🎉 У вас новый реферал! Вы будете получать 50% от суммы его платежей.'
             );
         }
-        
-        await client.query('COMMIT');
     } catch (error) {
         await client.query('ROLLBACK');
         console.error('Ошибка при обработке реферала:', error);
@@ -538,10 +565,10 @@ bot.action('back_to_menu', async (ctx) => {
 bot.on(message('photo'), async (ctx) => {
     const userId = ctx.from.id;
     let processingMsg;
+    let creditUsed = false;
     
     try {
         const credits = await checkCredits(userId);
-
         if (credits <= 0) {
             return ctx.reply(
                 '❌ У вас закончились кредиты\n\n' +
@@ -557,11 +584,7 @@ bot.on(message('photo'), async (ctx) => {
             );
         }
 
-        processingMsg = await ctx.reply(
-            '⏳ Начинаю обработку изображения...\n' +
-            'Пожалуйста, подождите.',
-            { reply_markup: cancelKeyboard }
-        );
+        processingMsg = await ctx.reply('⏳ Начинаю обработку изображения...');
 
         const photo = ctx.message.photo[ctx.message.photo.length - 1];
         const file = await ctx.telegram.getFile(photo.file_id);
@@ -581,11 +604,11 @@ bot.on(message('photo'), async (ctx) => {
             throw new Error('AGE_RESTRICTION');
         }
 
-        console.log('Отправка изображения на обработку...');
         const result = await processImage(imageBuffer, userId);
 
         if (result.idGen) {
             await useCredit(userId);
+            creditUsed = true;
             await ctx.reply(
                 '✅ Изображение принято в обработку:\n\n' +
                 `⏱ Время в очереди: ${result.queueTime} сек\n` +
@@ -596,40 +619,30 @@ bot.on(message('photo'), async (ctx) => {
             );
         }
 
+    } catch (error) {
+        if (creditUsed) {
+            await returnCredit(userId);
+            await pool.query(
+                'UPDATE users SET pending_task_id = NULL WHERE user_id = $1',
+                [userId]
+            );
+        }
+        
+        let errorMessage = '❌ Произошла ошибка при обработке изображения.';
+        if (error instanceof Error) {
+            if (error.message === 'AGE_RESTRICTION') {
+                errorMessage = '🔞 Обработка запрещена: Изображение не прошло проверку возрастных ограничений.';
+            } else if (error.message === 'INSUFFICIENT_BALANCE') {
+                errorMessage = '⚠️ Сервис временно недоступен. Попробуйте позже.';
+            }
+        }
+        await ctx.reply(errorMessage, { reply_markup: mainKeyboard });
+    } finally {
         if (processingMsg) {
             await ctx.telegram.deleteMessage(ctx.chat.id, processingMsg.message_id).catch(() => {});
         }
-
-    } catch (error) {
-        let errorMessage = '❌ Произошла ошибка при обработке изображения.';
-        
-        if (error instanceof Error) {
-            console.error('Ошибка при обработке изображения:', error.message);
-            
-            if (error.message === 'AGE_RESTRICTION') {
-                errorMessage = '🔞 Обработка запрещена:\n\n' +
-                    'Изображение не прошло проверку возрастных ограничений. ' +
-                    'Пожалуйста, убедитесь, что на фото только люди старше 18 лет.';
-                } else if (error.message === 'INSUFFICIENT_BALANCE') {
-                    errorMessage = '⚠️ Сервис временно недоступен\n\n' +
-                        'К сожалению, у сервиса закончился баланс API. ' +
-                        'Пожалуйста, попробуйте позже или свяжитесь с администратором бота.\n\n' +
-                        'Ваши кредиты сохранены и будут доступны позже.';
-                } else {
-                    errorMessage += `\n${error.message}`;
-                }
-            }
-    
-            await ctx.reply(
-                errorMessage,
-                { reply_markup: mainKeyboard }
-            );
-    
-            if (processingMsg) {
-                await ctx.telegram.deleteMessage(ctx.chat.id, processingMsg.message_id).catch(() => {});
-            }
-        }
-    });
+    }
+});
     
     // Webhook обработчик
     app.post(['/', '/webhook'], upload.any(), async (req, res) => {
@@ -773,6 +786,30 @@ bot.on(message('photo'), async (ctx) => {
         } catch (error) {
             console.error('Ошибка при запуске приложения:', error);
             process.exit(1);
+        }
+    }
+    async function cleanupStaleTasks() {
+        const staleTimeout = 30 * 60 * 1000; // 30 минут
+        
+        const staleResults = await pool.query(`
+            SELECT user_id, pending_task_id 
+            FROM users 
+            WHERE pending_task_id IS NOT NULL 
+            AND last_used < NOW() - INTERVAL '30 minutes'
+        `);
+        
+        for (const row of staleResults.rows) {
+            await returnCredit(row.user_id);
+            await pool.query(
+                'UPDATE users SET pending_task_id = NULL WHERE user_id = $1',
+                [row.user_id]
+            );
+            
+            await bot.telegram.sendMessage(
+                row.user_id,
+                '⚠️ Обработка изображения не была завершена. Кредит возвращен.',
+                { reply_markup: mainKeyboard }
+            );
         }
     }
     

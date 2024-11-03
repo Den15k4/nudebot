@@ -356,23 +356,37 @@ export class RukassaPayment {
 export function setupPaymentCommands(bot: Telegraf, pool: Pool): void {
     bot.action(/currency_(.+)/, async (ctx) => {
         try {
-            const currency = ctx.match[1] as SupportedCurrency;
-            const curr = SUPPORTED_CURRENCIES.find(c => c.code === currency);
-            
-            if (!curr) {
+            const currency = ctx.match[1] as string;
+            if (!SUPPORTED_CURRENCIES.find(c => c.code === currency)) {
                 await ctx.answerCbQuery('Неподдерживаемая валюта');
                 return;
             }
-
+    
+            const curr = SUPPORTED_CURRENCIES.find(c => c.code === currency)!;
+            
             const packagesKeyboard = {
                 inline_keyboard: [
-                    ...CREDIT_PACKAGES.map(pkg => [{
-                        text: `${pkg.description} - ${pkg.prices[currency]} ${curr.symbol}`,
-                        callback_data: `buy_${pkg.id}_${currency}`
-                    }]),
+                    ...CREDIT_PACKAGES
+                        .filter(pkg => pkg.prices[currency] >= curr.minAmount)
+                        .map(pkg => [{
+                            text: `${pkg.description} - ${pkg.prices[currency]} ${curr.symbol}`,
+                            callback_data: `buy_${pkg.id}_${currency}`
+                        }]),
                     [{ text: '↩️ Назад к способам оплаты', callback_data: 'buy_credits' }]
                 ]
             };
+    
+            await ctx.answerCbQuery();
+            await ctx.editMessageCaption(
+                `💫 Выберите пакет кредитов (${curr.name}):\n\n` +
+                `ℹ️ Чем больше пакет, тем выгоднее цена за кредит!`,
+                { reply_markup: packagesKeyboard }
+            );
+        } catch (error) {
+            console.error('Ошибка при выборе валюты:', error);
+            await ctx.answerCbQuery('Произошла ошибка. Попробуйте позже.');
+        }
+    });
 
             await ctx.answerCbQuery();
             await ctx.editMessageCaption(
@@ -702,6 +716,25 @@ export function setupRukassaWebhook(app: express.Express, rukassaPayment: Rukass
             </html>
         `);
     });
+    async function cleanupStalePayments() {
+        const staleTimeout = 60 * 60 * 1000; // 1 час
+        
+        const stalePayments = await pool.query(`
+            UPDATE payments 
+            SET status = 'expired'
+            WHERE status = 'pending' 
+            AND created_at < NOW() - INTERVAL '1 hour'
+            RETURNING user_id
+        `);
+        
+        for (const row of stalePayments.rows) {
+            await bot.telegram.sendMessage(
+                row.user_id,
+                '⚠️ Время ожидания оплаты истекло. Пожалуйста, создайте новый платеж.',
+                { reply_markup: mainKeyboard }
+            );
+        }
+    }
 
     app.get('/health', (req, res) => {
         res.json({
