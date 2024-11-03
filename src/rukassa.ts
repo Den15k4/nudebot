@@ -1,26 +1,20 @@
-import { Telegraf } from 'telegraf';
+import { Telegraf, Markup } from 'telegraf';
 import axios from 'axios';
 import { Pool } from 'pg';
 import express from 'express';
 import crypto from 'crypto';
 
-// Интерфейс для обработчика реферальных платежей
-interface ReferralPaymentHandler {
-    processReferralPayment: (userId: number, amount: number) => Promise<void>;
-}
-
 // Основные конфигурационные параметры
 const SHOP_ID = process.env.SHOP_ID || '2660';
 const TOKEN = process.env.TOKEN || '9876a82910927a2c9a43f34cb5ad2de7';
 const RUKASSA_API_URL = 'https://lk.rukassa.pro/api/v1/create';
-const BASE_WEBHOOK_URL = process.env.WEBHOOK_URL || 'https://nudebot-production.up.railway.app';
+const WEBHOOK_URL = process.env.WEBHOOK_URL?.replace('/webhook', '') || 'https://nudebot-production.up.railway.app';
 
 // Курсы валют к рублю
 const CURRENCY_RATES = {
     RUB: 1,
-    KZT: 0.21,
-    UZS: 0.0075,
-    CRYPTO: 95
+    KZT: 0.21,      // 1 рубль = ~4.76 тенге
+    UZS: 0.0075,    // 1 рубль = ~133 сума
 };
 
 // Интерфейсы
@@ -55,10 +49,9 @@ interface Price {
     RUB: number;
     KZT: number;
     UZS: number;
-    CRYPTO: number;
 }
 
-type SupportedCurrency = 'RUB' | 'KZT' | 'UZS' | 'CRYPTO';
+type SupportedCurrency = 'RUB' | 'KZT' | 'UZS';
 
 interface Currency {
     code: SupportedCurrency;
@@ -89,34 +82,26 @@ const SUPPORTED_CURRENCIES: Currency[] = [
         symbol: '₸', 
         name: 'Visa/MC (KZT)', 
         method: 'card_kzt',
-        minAmount: 32500
+        minAmount: 32500  // ~300₽
     },
     { 
         code: 'UZS', 
         symbol: 'сум', 
         name: 'Visa/MC (UZS)', 
         method: 'card_uzs',
-        minAmount: 86000
-    },
-    { 
-        code: 'CRYPTO', 
-        symbol: 'USDT', 
-        name: 'Криптовалюта', 
-        method: 'crypto',
-        minAmount: 3
+        minAmount: 86000  // ~650₽
     }
 ];
 
-// Пакеты с ценами
+// Пакеты с ценами в местных валютах
 const CREDIT_PACKAGES: PaymentPackage[] = [
     {
         id: 1,
         credits: 3,
         prices: {
-            RUB: 300,
-            KZT: 32500,
-            UZS: 86000,
-            CRYPTO: 3.00
+            RUB: 300,     // 300₽
+            KZT: 32500,   // ~300₽
+            UZS: 86000,   // ~650₽
         },
         description: '3 генерации'
     },
@@ -124,10 +109,9 @@ const CREDIT_PACKAGES: PaymentPackage[] = [
         id: 2,
         credits: 7,
         prices: {
-            RUB: 600,
-            KZT: 58500,
-            UZS: 154800,
-            CRYPTO: 6.00
+            RUB: 600,      // 600₽
+            KZT: 58500,    // ~600₽
+            UZS: 154800,   // ~1200₽
         },
         description: '7 генераций'
     },
@@ -135,10 +119,9 @@ const CREDIT_PACKAGES: PaymentPackage[] = [
         id: 3,
         credits: 15,
         prices: {
-            RUB: 1200,
-            KZT: 108000,
-            UZS: 286000,
-            CRYPTO: 12.00
+            RUB: 1200,     // 1200₽
+            KZT: 108000,   // ~1200₽
+            UZS: 286000,   // ~2150₽
         },
         description: '15 генераций'
     },
@@ -146,14 +129,18 @@ const CREDIT_PACKAGES: PaymentPackage[] = [
         id: 4,
         credits: 30,
         prices: {
-            RUB: 2000,
-            KZT: 195000,
-            UZS: 516000,
-            CRYPTO: 20.00
+            RUB: 2000,     // 2000₽
+            KZT: 195000,   // ~2000₽
+            UZS: 516000,   // ~3900₽
         },
         description: '30 генераций'
     }
 ];
+
+// Интерфейс для обработчика реферальных платежей
+interface ReferralPaymentHandler {
+    processReferralPayment: (userId: number, amount: number) => Promise<void>;
+}
 
 export class RukassaPayment {
     private pool: Pool;
@@ -267,10 +254,10 @@ export class RukassaPayment {
             formData.append('method', curr.method);
             formData.append('user_code', userId.toString());
             formData.append('currency_in', currency);
-            formData.append('webhook_url', `${BASE_WEBHOOK_URL}/rukassa/webhook`);
-            formData.append('success_url', `${BASE_WEBHOOK_URL}/payment/success`);
-            formData.append('fail_url', `${BASE_WEBHOOK_URL}/payment/fail`);
-            formData.append('back_url', `${BASE_WEBHOOK_URL}/payment/back`);
+            formData.append('webhook_url', `${WEBHOOK_URL}/rukassa/webhook`);
+            formData.append('success_url', `${WEBHOOK_URL}/payment/success`);
+            formData.append('fail_url', `${WEBHOOK_URL}/payment/fail`);
+            formData.append('back_url', `${WEBHOOK_URL}/payment/back`);
 
             formData.append('custom_fields', JSON.stringify({
                 user_id: userId,
@@ -403,7 +390,6 @@ export class RukassaPayment {
         }
     }
 
-    // Метод для очистки старых платежей
     async cleanupStalePayments(): Promise<void> {
         const client = await this.pool.connect();
         try {
@@ -447,9 +433,29 @@ export class RukassaPayment {
 }
 
 export function setupPaymentCommands(bot: Telegraf, pool: Pool): void {
+    bot.action('buy_credits', async (ctx) => {
+        try {
+            const keyboard = Markup.inlineKeyboard([
+                [Markup.button.callback('💳 Visa/MC (RUB)', 'currency_RUB')],
+                [Markup.button.callback('💳 Visa/MC (KZT)', 'currency_KZT')],
+                [Markup.button.callback('💳 Visa/MC (UZS)', 'currency_UZS')],
+                [Markup.button.callback('↩️ Назад', 'back_to_menu')]
+            ]);
+
+            await ctx.answerCbQuery();
+            await ctx.editMessageCaption(
+                '💳 Выберите способ оплаты:',
+                { reply_markup: keyboard }
+            );
+        } catch (error) {
+            console.error('Ошибка при выборе способа оплаты:', error);
+            await ctx.answerCbQuery('Произошла ошибка. Попробуйте позже.');
+        }
+    });
+
     bot.action(/currency_(.+)/, async (ctx) => {
         try {
-            const currency = ctx.match[1] as string;
+            const currency = ctx.match[1] as SupportedCurrency;
             if (!SUPPORTED_CURRENCIES.find(c => c.code === currency)) {
                 await ctx.answerCbQuery('Неподдерживаемая валюта');
                 return;
@@ -576,7 +582,7 @@ export function setupRukassaWebhook(app: express.Express, rukassaPayment: Rukass
             await rukassaPayment.handleWebhook(req.body);
             console.log('Webhook обработан успешно', {
                 timestamp: new Date().toISOString(),
-                webhookUrl: `${BASE_WEBHOOK_URL}/rukassa/webhook`
+                webhookUrl: `${WEBHOOK_URL}/rukassa/webhook`
             });
             
             res.json({ status: 'success' });
@@ -597,7 +603,10 @@ export function setupRukassaWebhook(app: express.Express, rukassaPayment: Rukass
         }
     });
 
-    // Страницы успешной оплаты, ошибки и возврата остаются без изменений
+    setupPaymentPages(app);
+}
+
+function setupPaymentPages(app: express.Express): void {
     app.get('/payment/success', (req, res) => {
         res.send(`
             <!DOCTYPE html>
@@ -615,7 +624,6 @@ export function setupRukassaWebhook(app: express.Express, rukassaPayment: Rukass
                         min-height: 100vh;
                         margin: 0;
                         background-color: #f0f2f5;
-                        color: #1a1a1a;
                     }
                     .container {
                         text-align: center;
@@ -629,22 +637,8 @@ export function setupRukassaWebhook(app: express.Express, rukassaPayment: Rukass
                     .success-icon {
                         font-size: 64px;
                         margin-bottom: 1rem;
-                        animation: bounce 1s ease infinite;
                     }
-                    @keyframes bounce {
-                        0%, 100% { transform: translateY(0); }
-                        50% { transform: translateY(-10px); }
-                    }
-                    h1 {
-                        color: #4CAF50;
-                        margin: 0.5rem 0;
-                        font-size: 24px;
-                    }
-                    p {
-                        color: #666;
-                        line-height: 1.5;
-                        margin: 1rem 0;
-                    }
+                    h1 { color: #4CAF50; }
                     .telegram-button {
                         display: inline-block;
                         background-color: #0088cc;
@@ -653,13 +647,6 @@ export function setupRukassaWebhook(app: express.Express, rukassaPayment: Rukass
                         border-radius: 8px;
                         text-decoration: none;
                         margin-top: 1rem;
-                        transition: all 0.3s ease;
-                        font-weight: bold;
-                    }
-                    .telegram-button:hover {
-                        background-color: #006699;
-                        transform: translateY(-2px);
-                        box-shadow: 0 4px 12px rgba(0,136,204,0.3);
                     }
                 </style>
             </head>
@@ -669,7 +656,7 @@ export function setupRukassaWebhook(app: express.Express, rukassaPayment: Rukass
                     <h1>Оплата успешно завершена!</h1>
                     <p>Кредиты уже начислены на ваш баланс.</p>
                     <p>Вернитесь в Telegram бот для продолжения работы.</p>
-                    <a href="tg://resolve?domain=your_bot_username" class="telegram-button">
+                    <a href="tg://resolve?domain=photowombot" class="telegram-button">
                         Открыть бот
                     </a>
                 </div>
@@ -695,7 +682,6 @@ export function setupRukassaWebhook(app: express.Express, rukassaPayment: Rukass
                         min-height: 100vh;
                         margin: 0;
                         background-color: #f0f2f5;
-                        color: #1a1a1a;
                     }
                     .container {
                         text-align: center;
@@ -709,23 +695,8 @@ export function setupRukassaWebhook(app: express.Express, rukassaPayment: Rukass
                     .error-icon {
                         font-size: 64px;
                         margin-bottom: 1rem;
-                        animation: shake 0.5s ease-in-out;
                     }
-                    @keyframes shake {
-                        0%, 100% { transform: translateX(0); }
-                        25% { transform: translateX(-10px); }
-                        75% { transform: translateX(10px); }
-                    }
-                    h1 {
-                        color: #f44336;
-                        margin: 0.5rem 0;
-                        font-size: 24px;
-                    }
-                    p {
-                        color: #666;
-                        line-height: 1.5;
-                        margin: 1rem 0;
-                    }
+                    h1 { color: #f44336; }
                     .telegram-button {
                         display: inline-block;
                         background-color: #0088cc;
@@ -734,13 +705,6 @@ export function setupRukassaWebhook(app: express.Express, rukassaPayment: Rukass
                         border-radius: 8px;
                         text-decoration: none;
                         margin-top: 1rem;
-                        transition: all 0.3s ease;
-                        font-weight: bold;
-                    }
-                    .telegram-button:hover {
-                        background-color: #006699;
-                        transform: translateY(-2px);
-                        box-shadow: 0 4px 12px rgba(0,136,204,0.3);
                     }
                 </style>
             </head>
@@ -750,7 +714,7 @@ export function setupRukassaWebhook(app: express.Express, rukassaPayment: Rukass
                     <h1>Ошибка оплаты</h1>
                     <p>К сожалению, произошла ошибка при обработке платежа.</p>
                     <p>Вернитесь в Telegram бот и попробуйте снова.</p>
-                    <a href="tg://resolve?domain=your_bot_username" class="telegram-button">
+                    <a href="tg://resolve?domain=photowombot" class="telegram-button">
                         Открыть бот
                     </a>
                 </div>
@@ -776,7 +740,6 @@ export function setupRukassaWebhook(app: express.Express, rukassaPayment: Rukass
                         min-height: 100vh;
                         margin: 0;
                         background-color: #f0f2f5;
-                        color: #1a1a1a;
                     }
                     .container {
                         text-align: center;
@@ -791,16 +754,7 @@ export function setupRukassaWebhook(app: express.Express, rukassaPayment: Rukass
                         font-size: 64px;
                         margin-bottom: 1rem;
                     }
-                    h1 {
-                        color: #2196F3;
-                        margin: 0.5rem 0;
-                        font-size: 24px;
-                    }
-                    p {
-                        color: #666;
-                        line-height: 1.5;
-                        margin: 1rem 0;
-                    }
+                    h1 { color: #2196F3; }
                     .telegram-button {
                         display: inline-block;
                         background-color: #0088cc;
@@ -809,22 +763,15 @@ export function setupRukassaWebhook(app: express.Express, rukassaPayment: Rukass
                         border-radius: 8px;
                         text-decoration: none;
                         margin-top: 1rem;
-                        transition: all 0.3s ease;
-                        font-weight: bold;
-                    }
-                    .telegram-button:hover {
-                        background-color: #006699;
-                        transform: translateY(-2px);
-                        box-shadow: 0 4px 12px rgba(0,136,204,0.3);
                     }
                 </style>
             </head>
             <body>
                 <div class="container">
                     <div class="back-icon">↩️</div>
-                    <h1>Оплата отменена</h1>
-                    <p>Вы можете вернуться в Telegram бот и попробовать снова.</p>
-                    <a href="tg://resolve?domain=your_bot_username" class="telegram-button">
+                    <h1>Платеж отменен</h1>
+                    <p>Вернитесь в Telegram бот чтобы создать новый платеж.</p>
+                    <tg://resolve?domain=photowombot" class="telegram-button">
                         Открыть бот
                     </a>
                 </div>
@@ -838,7 +785,7 @@ export function setupRukassaWebhook(app: express.Express, rukassaPayment: Rukass
         res.status(200).json({
             status: 'ok',
             timestamp: new Date().toISOString(),
-            webhook_url: `${BASE_WEBHOOK_URL}/rukassa/webhook`
+            webhook_url: `${WEBHOOK_URL}/rukassa/webhook`
         });
     });
 }
