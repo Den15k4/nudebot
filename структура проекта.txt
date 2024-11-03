@@ -1,34 +1,12 @@
 project/
-├── assets/              # Изображения для сообщений бота
-│   ├── balance.jpg
-│   ├── payment.jpg
-│   ├── payment_process.jpg
-│   ├── referral.jpg
-│   └── welcome.jpg
+├
 ├── src/
-│   ├── config/         
-│   │   ├── constants.ts         # Константы приложения
-│   │   └── environment.ts       # Переменные окружения
-│   ├── handlers/       
-│   │   ├── admin.ts            # Обработчики админ-команд
-│   │   ├── commands.ts         # Обработчики основных команд
-│   │   ├── callbacks.ts        # Обработчики кнопок
-│   │   └── webhooks.ts         # Обработчики вебхуков
-│   ├── middlewares/
-│   │   └── auth.ts             # Авторизация
-│   ├── services/
-│   │   ├── broadcast.ts        # Рассылки
-│   │   ├── database.ts         # Работа с БД
-│   │   ├── imageProcess.ts     # Обработка изображений
-│   │   ├── payment.ts          # Платежи
-│   │   ├── backup.ts           # Бэкапы
-│   │   └── stats/             # Статистика
-│   │       ├── statsExporter.ts
-│   │       └── chartGenerator.ts
-│   ├── types/
-│   │   └── interfaces.ts       # Типы и интерфейсы
-│   ├── utils/
-│   │   ├── keyboard.ts         # Клавиатуры
-│   │   ├── messages.ts         # Шаблоны сообщений
-│   │   └── photoProcess.ts     # Обработка фото
+│   ├── rukassa.ts - # оплата 
+│   │   
 │   └── index.ts               # Точка входа
+│
+│
+├── .env                       # Переменные окружения
+├── .gitignore
+├── package.json
+├── tsconfig.json
