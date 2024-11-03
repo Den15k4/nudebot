@@ -844,6 +844,7 @@ app.get('/health', (req, res) => {
 });
 
 // Запуск приложения
+// Запуск приложения
 async function start() {
     try {
         await initDB();
@@ -898,10 +899,13 @@ async function start() {
         const WEBHOOK_PATH = '/telegram-webhook';
         const WEBHOOK_URL = `${BASE_WEBHOOK_URL}${WEBHOOK_PATH}`;
 
+        // Сначала удаляем существующий webhook
+        await bot.telegram.deleteWebhook();
+        
         // Настраиваем webhook для Telegram
         app.use(bot.webhookCallback(WEBHOOK_PATH));
 
-        // Сначала запускаем сервер
+        // Запускаем сервер
         await new Promise<void>((resolve) => {
             app.listen(PORT, '0.0.0.0', () => {
                 console.log(`Webhook сервер запущен на порту ${PORT}`);
@@ -911,7 +915,7 @@ async function start() {
             });
         });
 
-        // Затем устанавливаем webhook для Telegram
+        // Устанавливаем новый webhook
         await bot.telegram.setWebhook(WEBHOOK_URL);
         console.log('Telegram webhook установлен:', WEBHOOK_URL);
 
