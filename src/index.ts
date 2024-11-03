@@ -536,14 +536,14 @@ bot.action('referral_program', async (ctx) => {
 
         const userId = ctx.from.id;
         const user = await pool.query(
-            'SELECT total_referrals, referral_earnings FROM users WHERE user_id = $1',
+            'SELECT total_referrals, COALESCE(referral_earnings, 0) as referral_earnings FROM users WHERE user_id = $1',
             [userId]
         );
 
         const botInfo = await bot.telegram.getMe();
         const referralLink = `https://t.me/${botInfo.username}?start=ref${userId}`;
         const totalReferrals = user.rows[0]?.total_referrals || 0;
-        const earnings = user.rows[0]?.referral_earnings || 0;
+        const earnings = Number(user.rows[0]?.referral_earnings || 0);
 
         await ctx.answerCbQuery();
         await ctx.editMessageCaption(
@@ -569,6 +569,7 @@ bot.action('referral_program', async (ctx) => {
     }
 });
 
+// Также исправим обработчик обновления статистики
 bot.action('refresh_referrals', async (ctx) => {
     try {
         await ctx.answerCbQuery();
@@ -578,14 +579,14 @@ bot.action('refresh_referrals', async (ctx) => {
 
         const userId = ctx.from.id;
         const user = await pool.query(
-            'SELECT total_referrals, referral_earnings FROM users WHERE user_id = $1',
+            'SELECT total_referrals, COALESCE(referral_earnings, 0) as referral_earnings FROM users WHERE user_id = $1',
             [userId]
         );
 
         const botInfo = await bot.telegram.getMe();
         const referralLink = `https://t.me/${botInfo.username}?start=ref${userId}`;
         const totalReferrals = user.rows[0]?.total_referrals || 0;
-        const earnings = user.rows[0]?.referral_earnings || 0;
+        const earnings = Number(user.rows[0]?.referral_earnings || 0);
 
         await ctx.editMessageCaption(
             '👥 Реферальная программа\n\n' +
