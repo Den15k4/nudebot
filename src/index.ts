@@ -750,7 +750,41 @@ async function start() {
         await initDB();
         console.log('База данных инициализирована');
 
-        const rukassaPayment = new RukassaPayment(pool, bot);
+        const rukassaPayment = new RukassaPayment(pool, bot, {
+            processReferralPayment: async (userId: number, amount: number) => {
+                const client = await pool.connect();
+                try {
+                    await client.query('BEGIN');
+                    
+                    const referrerResult = await client.query(
+                        'SELECT referrer_id FROM users WHERE user_id = $1',
+                        [userId]
+                    );
+                    
+                    if (referrerResult.rows[0]?.referrer_id) {
+                        const referrerId = referrerResult.rows[0].referrer_id;
+                        const referralBonus = amount * 0.5;
+                        
+                        await client.query(
+                            'UPDATE users SET referral_earnings = referral_earnings + $1 WHERE user_id = $2',
+                            [referralBonus, referrerId]
+                        );
+                        
+                        await bot.telegram.sendMessage(
+                            referrerId,
+                            `🎁 Вы получили реферальный бонус ${referralBonus.toFixed(2)} RUB от оплаты вашего реферала!`
+                        );
+                    }
+                    
+                    await client.query('COMMIT');
+                } catch (error) {
+                    await client.query('ROLLBACK');
+                    console.error('Ошибка при обработке реферального платежа:', error);
+                } finally {
+                    client.release();
+                }
+            }
+        });
         await rukassaPayment.initPaymentsTable();
         console.log('Таблица платежей инициализирована');
 

@@ -4,6 +4,11 @@ import { Pool } from 'pg';
 import express from 'express';
 import crypto from 'crypto';
 
+// Интерфейс для обработчика реферальных платежей
+interface ReferralPaymentHandler {
+    processReferralPayment: (userId: number, amount: number) => Promise<void>;
+}
+
 // Основные конфигурационные параметры
 const SHOP_ID = process.env.SHOP_ID || '2660';
 const TOKEN = process.env.TOKEN || '9876a82910927a2c9a43f34cb5ad2de7';
@@ -153,10 +158,12 @@ const CREDIT_PACKAGES: PaymentPackage[] = [
 export class RukassaPayment {
     private pool: Pool;
     private bot: Telegraf;
+    private referralHandler?: ReferralPaymentHandler;
 
-    constructor(pool: Pool, bot: Telegraf) {
+    constructor(pool: Pool, bot: Telegraf, referralHandler?: ReferralPaymentHandler) {
         this.pool = pool;
         this.bot = bot;
+        this.referralHandler = referralHandler;
     }
 
     async initPaymentsTable(): Promise<void> {
@@ -348,10 +355,9 @@ export class RukassaPayment {
                 );
 
                 const amountInRub = parseFloat(data.amount);
-                if (!isNaN(amountInRub)) {
+                if (!isNaN(amountInRub) && this.referralHandler) {
                     try {
-                        const referralHandler = await import('./index');
-                        await referralHandler.processReferralPayment(user_id, amountInRub);
+                        await this.referralHandler.processReferralPayment(user_id, amountInRub);
                     } catch (error) {
                         console.error('Ошибка при обработке реферального платежа:', error);
                     }
