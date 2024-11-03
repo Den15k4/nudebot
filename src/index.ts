@@ -1,4 +1,4 @@
-import { Telegraf, Markup } from 'telegraf';
+import { Telegraf } from 'telegraf';
 import { message } from 'telegraf/filters';
 import axios from 'axios';
 import { Pool } from 'pg';
@@ -28,20 +28,24 @@ const CLOTHOFF_WEBHOOK_URL = `${BASE_WEBHOOK_URL}/webhook`;
 const PORT = parseInt(process.env.PORT || '8080', 10);
 
 // Клавиатуры
-const mainKeyboard = Markup.inlineKeyboard([
-    [
-        Markup.button.callback('💫 Начать обработку', 'start_processing'),
-        Markup.button.callback('💳 Купить кредиты', 'buy_credits')
-    ],
-    [
-        Markup.button.callback('💰 Баланс', 'check_balance'),
-        Markup.button.callback('👥 Реферальная программа', 'referral_program')
+const mainKeyboard = {
+    inline_keyboard: [
+        [
+            { text: '💫 Начать обработку', callback_data: 'start_processing' },
+            { text: '💳 Купить кредиты', callback_data: 'buy_credits' }
+        ],
+        [
+            { text: '💰 Баланс', callback_data: 'check_balance' },
+            { text: '👥 Реферальная программа', callback_data: 'referral_program' }
+        ]
     ]
-]);
+};
 
-const cancelKeyboard = Markup.inlineKeyboard([
-    [Markup.button.callback('❌ Отмена', 'back_to_menu')]
-]);
+const cancelKeyboard = {
+    inline_keyboard: [
+        [{ text: '❌ Отмена', callback_data: 'back_to_menu' }]
+    ]
+};
 
 // Интерфейсы
 interface ApiResponse {
@@ -123,7 +127,6 @@ async function initDB() {
     try {
         await client.query('BEGIN');
 
-        // Создаем таблицы только если их нет
         const tablesExist = await client.query(`
             SELECT EXISTS (
                 SELECT FROM information_schema.tables 
@@ -181,7 +184,9 @@ async function cleanupStaleTasks() {
             await bot.telegram.sendMessage(
                 row.user_id,
                 '⚠️ Обработка изображения не была завершена. Кредит возвращен.',
-                { reply_markup: mainKeyboard }
+                { 
+                    reply_markup: mainKeyboard
+                }
             ).catch(console.error);
         }
 
@@ -200,7 +205,6 @@ async function processReferral(userId: number, referrerId: number): Promise<void
     try {
         await client.query('BEGIN');
         
-        // Проверяем существование реферера
         const referrer = await client.query(
             'SELECT user_id FROM users WHERE user_id = $1',
             [referrerId]
@@ -210,7 +214,6 @@ async function processReferral(userId: number, referrerId: number): Promise<void
             throw new Error('Реферер не найден');
         }
 
-        // Проверяем что пользователь не пытается стать своим рефералом
         if (userId === referrerId) {
             throw new Error('Нельзя быть своим рефералом');
         }
@@ -221,7 +224,6 @@ async function processReferral(userId: number, referrerId: number): Promise<void
         );
         
         if (!existingUser.rows[0]?.referrer_id) {
-            // Проверяем циклические связи
             const referrerChain = await client.query(`
                 WITH RECURSIVE ref_chain AS (
                     SELECT user_id, referrer_id, 1 as depth
@@ -312,7 +314,6 @@ async function useCredit(userId: number): Promise<void> {
         client.release();
     }
 }
-
 async function returnCredit(userId: number): Promise<void> {
     const client = await pool.connect();
     try {
@@ -355,7 +356,7 @@ async function addNewUser(userId: number, username: string | undefined): Promise
 
 // Обработка изображений
 async function isAdultContent(): Promise<boolean> {
-    return true; // Заглушка, в реальности здесь должна быть проверка
+    return true; // Заглушка
 }
 
 async function processImage(imageBuffer: Buffer, userId: number): Promise<ProcessingResult> {
@@ -569,9 +570,44 @@ bot.action('referral_program', async (ctx) => {
 });
 
 bot.action('refresh_referrals', async (ctx) => {
-    await ctx.answerCbQuery();
-    await ctx.editMessageCaption('♻️ Обновление статистики...');
-    await bot.action('referral_program', ctx);
+    try {
+        await ctx.answerCbQuery();
+        if (!ctx.from) {
+            return;
+        }
+
+        const userId = ctx.from.id;
+        const user = await pool.query(
+            'SELECT total_referrals, referral_earnings FROM users WHERE user_id = $1',
+            [userId]
+        );
+
+        const botInfo = await bot.telegram.getMe();
+        const referralLink = `https://t.me/${botInfo.username}?start=ref${userId}`;
+        const totalReferrals = user.rows[0]?.total_referrals || 0;
+        const earnings = user.rows[0]?.referral_earnings || 0;
+
+        await ctx.editMessageCaption(
+            '👥 Реферальная программа\n\n' +
+            '🔗 Ваша реферальная ссылка:\n' +
+            `${referralLink}\n\n` +
+            '📊 Статистика:\n' +
+            `👤 Рефералов: ${totalReferrals}\n` +
+            `💰 Заработано: ${earnings.toFixed(2)} RUB\n\n` +
+            '💡 Получайте 50% от каждого платежа ваших рефералов!',
+            {
+                reply_markup: {
+                    inline_keyboard: [
+                        [{ text: '♻️ Обновить статистику', callback_data: 'refresh_referrals' }],
+                        [{ text: '↩️ В главное меню', callback_data: 'back_to_menu' }]
+                    ]
+                }
+            }
+        );
+    } catch (error) {
+        console.error('Ошибка при обновлении статистики:', error);
+        await ctx.answerCbQuery('Произошла ошибка. Попробуйте позже.');
+    }
 });
 
 bot.action('back_to_menu', async (ctx) => {
@@ -586,7 +622,6 @@ bot.action('back_to_menu', async (ctx) => {
         await ctx.answerCbQuery('Произошла ошибка. Попробуйте позже.');
     }
 });
-
 // Обработка фотографий
 bot.on(message('photo'), async (ctx) => {
     const userId = ctx.from.id;
@@ -780,7 +815,8 @@ app.post(['/webhook'], upload.any(), async (req, res) => {
                 }
 
                 await client.query(
-                    'UPDATE users SET pending_task_id = NULL WHERE user_id = $1',[userId]
+                    'UPDATE users SET pending_task_id = NULL WHERE user_id = $1',
+                    [userId]
                 );
             }
 

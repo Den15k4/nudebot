@@ -1,4 +1,4 @@
-import { Telegraf, Markup } from 'telegraf';
+import { Telegraf } from 'telegraf';
 import axios from 'axios';
 import { Pool } from 'pg';
 import express from 'express';
@@ -158,7 +158,6 @@ export class RukassaPayment {
         try {
             await client.query('BEGIN');
             
-            // Проверяем существование таблицы
             const tableExists = await client.query(`
                 SELECT EXISTS (
                     SELECT FROM information_schema.tables 
@@ -231,7 +230,6 @@ export class RukassaPayment {
         try {
             await client.query('BEGIN');
 
-            // Проверяем наличие незавершенных платежей
             const pendingPayments = await client.query(
                 'SELECT COUNT(*) FROM payments WHERE user_id = $1 AND status = $2',
                 [userId, 'pending']
@@ -326,7 +324,6 @@ export class RukassaPayment {
             const { user_id, credits, currency, amount } = paymentResult.rows[0];
 
             if (data.payment_status === 'paid') {
-                // Проверяем существование пользователя
                 const userExists = await client.query(
                     'SELECT 1 FROM users WHERE user_id = $1',
                     [user_id]
@@ -380,7 +377,6 @@ export class RukassaPayment {
             }
 
             await client.query('COMMIT');
-            console.log(`Webhook обработан успешно: статус=${data.payment_status}, пользователь=${user_id}`);
         } catch (error) {
             await client.query('ROLLBACK');
             console.error('Ошибка при обработке webhook:', error);
@@ -435,12 +431,14 @@ export class RukassaPayment {
 export function setupPaymentCommands(bot: Telegraf, pool: Pool): void {
     bot.action('buy_credits', async (ctx) => {
         try {
-            const keyboard = Markup.inlineKeyboard([
-                [Markup.button.callback('💳 Visa/MC (RUB)', 'currency_RUB')],
-                [Markup.button.callback('💳 Visa/MC (KZT)', 'currency_KZT')],
-                [Markup.button.callback('💳 Visa/MC (UZS)', 'currency_UZS')],
-                [Markup.button.callback('↩️ Назад', 'back_to_menu')]
-            ]);
+            const keyboard = {
+                inline_keyboard: [
+                    [{ text: '💳 Visa/MC (RUB)', callback_data: 'currency_RUB' }],
+                    [{ text: '💳 Visa/MC (KZT)', callback_data: 'currency_KZT' }],
+                    [{ text: '💳 Visa/MC (UZS)', callback_data: 'currency_UZS' }],
+                    [{ text: '↩️ Назад', callback_data: 'back_to_menu' }]
+                ]
+            };
 
             await ctx.answerCbQuery();
             await ctx.editMessageCaption(
@@ -567,7 +565,6 @@ export function setupRukassaWebhook(app: express.Express, rukassaPayment: Rukass
             console.log('Headers:', req.headers);
             console.log('Body:', JSON.stringify(req.body, null, 2));
             
-            // Проверка наличия необходимых полей
             const requiredFields = ['shop_id', 'amount', 'order_id', 'payment_status', 'merchant_order_id', 'sign'];
             const missingFields = requiredFields.filter(field => !req.body[field]);
             
@@ -580,10 +577,6 @@ export function setupRukassaWebhook(app: express.Express, rukassaPayment: Rukass
             }
             
             await rukassaPayment.handleWebhook(req.body);
-            console.log('Webhook обработан успешно', {
-                timestamp: new Date().toISOString(),
-                webhookUrl: `${WEBHOOK_URL}/rukassa/webhook`
-            });
             
             res.json({ status: 'success' });
         } catch (error) {
@@ -656,7 +649,7 @@ function setupPaymentPages(app: express.Express): void {
                     <h1>Оплата успешно завершена!</h1>
                     <p>Кредиты уже начислены на ваш баланс.</p>
                     <p>Вернитесь в Telegram бот для продолжения работы.</p>
-                    <a href="tg://resolve?domain=photowombot" class="telegram-button">
+                    <a href="tg://resolve?domain=your_bot_username" class="telegram-button">
                         Открыть бот
                     </a>
                 </div>
@@ -714,7 +707,7 @@ function setupPaymentPages(app: express.Express): void {
                     <h1>Ошибка оплаты</h1>
                     <p>К сожалению, произошла ошибка при обработке платежа.</p>
                     <p>Вернитесь в Telegram бот и попробуйте снова.</p>
-                    <a href="tg://resolve?domain=photowombot" class="telegram-button">
+                    <a href="tg://resolve?domain=your_bot_username" class="telegram-button">
                         Открыть бот
                     </a>
                 </div>
@@ -771,7 +764,7 @@ function setupPaymentPages(app: express.Express): void {
                     <div class="back-icon">↩️</div>
                     <h1>Платеж отменен</h1>
                     <p>Вернитесь в Telegram бот чтобы создать новый платеж.</p>
-                    <tg://resolve?domain=photowombot" class="telegram-button">
+                    <a href="tg://resolve?domain=your_bot_username" class="telegram-button">
                         Открыть бот
                     </a>
                 </div>
@@ -780,7 +773,6 @@ function setupPaymentPages(app: express.Express): void {
         `);
     });
 
-    // Health check для платежной системы
     app.get('/payment/health', (req, res) => {
         res.status(200).json({
             status: 'ok',
