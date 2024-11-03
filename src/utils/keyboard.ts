@@ -4,7 +4,7 @@ import {
     KeyboardOptions 
 } from '../types/interfaces';
 import { MENU_ACTIONS } from '../config/constants';
-import { logger } from '../index';
+import { logger } from '../utils/logger';
 
 // Базовая функция для создания клавиатуры с обработкой ошибок
 function createKeyboard(buttons: CustomInlineKeyboardButton[][], options: KeyboardOptions = {}) {
@@ -84,7 +84,8 @@ export function getAdminKeyboard(options: KeyboardOptions = {}) {
         const buttons: CustomInlineKeyboardButton[][] = [
             [{ text: '📊 Статистика', callback_data: 'admin_stats' }],
             [{ text: '📨 Рассылка', callback_data: 'admin_broadcast' }],
-            [{ text: '⚙️ Настройки', callback_data: 'admin_settings' }]
+            [{ text: '⚙️ Настройки', callback_data: 'admin_settings' }],
+            [{ text: '💰 Выводы', callback_data: 'admin_withdrawals' }]
         ];
 
         if (!options.hideBackButton) {
@@ -120,7 +121,7 @@ export function getPaymentKeyboard(options: KeyboardOptions = {}) {
     }
 }
 
-// Реферальная клавиатура
+// Клавиатура реферальной системы
 export function getReferralKeyboard(userId: number) {
     try {
         const buttons: CustomInlineKeyboardButton[][] = [
@@ -130,14 +131,33 @@ export function getReferralKeyboard(userId: number) {
             ],
             [{ 
                 text: '🔗 Поделиться', 
-                url: `https://t.me/${process.env.BOT_USERNAME}?start=${userId}` 
+                url: `https://t.me/${process.env.BOT_USERNAME}?start=${Buffer.from(userId.toString()).toString('base64')}` 
             }],
+            [{ text: '💰 Вывести средства', callback_data: 'action_withdraw' }],
             [{ text: '◀️ Назад в меню', callback_data: 'action_back' }]
         ];
 
         return createKeyboard(buttons);
     } catch (error) {
         logger.error('Ошибка в getReferralKeyboard:', error);
+        return getErrorKeyboard();
+    }
+}
+
+// Клавиатура для вывода средств
+export function getWithdrawKeyboard() {
+    try {
+        const buttons: CustomInlineKeyboardButton[][] = [
+            [
+                { text: '💳 Банковская карта', callback_data: 'withdraw_card' },
+                { text: '💎 USDT (TRC20)', callback_data: 'withdraw_crypto' }
+            ],
+            [{ text: '◀️ Назад', callback_data: 'action_referrals' }]
+        ];
+
+        return createKeyboard(buttons);
+    } catch (error) {
+        logger.error('Ошибка в getWithdrawKeyboard:', error);
         return getErrorKeyboard();
     }
 }
