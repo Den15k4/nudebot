@@ -30,7 +30,7 @@ export class ChannelRequestsHandler {
                     request.from.id
                 );
 
-                // Отправляем приветственное сообщение
+                // Отправляем приветственное сообщение с кнопкой
                 await this.bot.telegram.sendMessage(
                     request.from.id,
                     `👋 Спасибо за заявку в канал!\n\n` +
@@ -42,7 +42,7 @@ export class ChannelRequestsHandler {
                                 [
                                     {
                                         text: '🚀 Начать',
-                                        callback_data: '/start'
+                                        callback_data: 'start_processing' // Изменено с 'start' на 'start_processing'
                                     }
                                 ]
                             ]
