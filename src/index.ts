@@ -460,41 +460,6 @@ bot.command('start', async (ctx) => {
         await ctx.reply('Произошла ошибка при запуске бота. Попробуйте позже.');
     }
 });
-// Команды бота
-bot.action('start', async (ctx) => {
-    try {
-        const userId = ctx.from.id;
-        const username = ctx.from.username;
-        const args = ctx.message.text.split(' ');
-        
-        await addNewUser(userId, username);
-        
-        if (args[1] && args[1].startsWith('ref')) {
-            const referrerId = parseInt(args[1].substring(3));
-            if (referrerId && referrerId !== userId) {
-                try {
-                    await processReferral(userId, referrerId);
-                } catch (error) {
-                    console.error('Ошибка обработки реферала:', error);
-                }
-            }
-        }
-        
-        await ctx.replyWithPhoto(
-            { source: './assets/welcome.jpg' },
-            {
-                caption: 'Добро пожаловать! 👋\n\n' +
-                        'Я помогу вам раздеть любую даму!.\n' +
-                        'Для начала работы приобретите кредиты.\n\n' +
-                        'Выберите действие:',
-                reply_markup: mainKeyboard
-            }
-        );
-    } catch (error) {
-        console.error('Ошибка в команде start:', error);
-        await ctx.reply('Произошла ошибка при запуске бота. Попробуйте позже.');
-    }
-});
 
 // Обработчики действий
 bot.action('start_processing', async (ctx) => {
