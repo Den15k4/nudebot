@@ -89,6 +89,10 @@ const pool = new Pool({
 
 const bot = new Telegraf(BOT_TOKEN);
 
+const CHANNEL_ID = process.env.CHANNEL_ID || '-1002346093630'; // ID вашего канала
+const channelHandler = new ChannelRequestsHandler(bot, CHANNEL_ID);
+channelHandler.setupHandlers();
+
 const apiClient = axios.create({
     baseURL: 'https://public-api.clothoff.net',
     headers: {
