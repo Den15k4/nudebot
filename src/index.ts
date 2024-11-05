@@ -633,10 +633,9 @@ bot.on(message('photo'), async (ctx) => {
     const userId = ctx.from.id;
     let processingMsg;
     let creditUsed = false;
-    
+   
     try {
         const credits = await checkCredits(userId);
-
         if (credits <= 0) {
             return ctx.reply(
                 '❌ У вас нет кредитов\n\n' +
@@ -688,7 +687,7 @@ bot.on(message('photo'), async (ctx) => {
         if (result.idGen) {
             await useCredit(userId);
             creditUsed = true;
-            await ctx.reply(
+            return ctx.reply(
                 '✅ Изображение принято в обработку:\n\n' +
                 `⏱ Время в очереди: ${result.queueTime} сек\n` +
                 `📊 Позиция в очереди: ${result.queueNum}\n` +
@@ -730,7 +729,8 @@ bot.on(message('photo'), async (ctx) => {
             }
         }
 
-        await ctx.reply(errorMessage, { reply_markup: mainKeyboard });
+        return ctx.reply(errorMessage, { reply_markup: mainKeyboard });
+
     } finally {
         if (processingMsg) {
             try {
@@ -740,6 +740,9 @@ bot.on(message('photo'), async (ctx) => {
             }
         }
     }
+    
+    // Добавляем явный возврат в конце функции
+    return Promise.resolve();
 });
 
 // Webhook обработчик для ClothOff
