@@ -42,7 +42,7 @@ export class ChannelRequestsHandler {
                                 [
                                     {
                                         text: '🚀 Начать',
-                                        callback_data: '/start' // Изменено с 'start' на 'start_processing'
+                                        callback_data: 'back_to_menu' // Изменено с 'start' на 'start_processing'
                                     }
                                 ]
                             ]
