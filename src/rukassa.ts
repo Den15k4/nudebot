@@ -10,7 +10,7 @@ const TOKEN = process.env.TOKEN || '9876a82910927a2c9a43f34cb5ad2de7';
 const RUKASSA_API_URL = 'https://lk.rukassa.pro/api/v1/create';
 const WEBHOOK_URL = process.env.WEBHOOK_URL?.replace('/webhook', '') || 'https://nudebot-production.up.railway.app';
 
-// Курсы валют к рублю (актуальные на текущий момент)
+// Курсы валют к рублю
 const CURRENCY_RATES = {
     RUB: 1,
     KZT: 5,        // 1 рубль ≈ 5 тенге
@@ -19,13 +19,13 @@ const CURRENCY_RATES = {
 
 // Интерфейсы
 interface RukassaCreatePaymentResponse {
-    status: boolean;
-    error?: string;
-    message?: string;
-    url?: string;
-    link?: string;
     id?: number;
     hash?: string;
+    url?: string;
+    link?: string;
+    status?: boolean;
+    error?: string;
+    message?: string;
     order_id?: string;
 }
 
@@ -42,6 +42,16 @@ interface RukassaWebhookBody {
     currency?: string;
     description?: string;
     test?: boolean;
+}
+
+interface RukassaNewWebhookBody {
+    id: string;
+    order_id: string;
+    amount: string;
+    in_amount: string;
+    data: string;
+    createdDateTime: string;
+    status: string;
 }
 
 interface Price {
@@ -82,14 +92,14 @@ const SUPPORTED_CURRENCIES: Currency[] = [
         symbol: '₸', 
         name: 'Visa/MC (KZT)', 
         method: 'card_kzt',
-        minAmount: 2500  // ~500₽
+        minAmount: 2500
     },
     { 
         code: 'UZS', 
         symbol: 'сум', 
         name: 'Visa/MC (UZS)', 
         method: 'card_uzs',
-        minAmount: 70000  // ~500₽
+        minAmount: 70000
     }
 ];
 
@@ -105,8 +115,8 @@ const CREDIT_PACKAGES: PaymentPackage[] = [
         credits: 4,
         prices: {
             RUB: 500,
-            KZT: convertPrice(500, 'KZT'),    // 2500 тенге
-            UZS: convertPrice(500, 'UZS'),    // 70000 сумов
+            KZT: convertPrice(500, 'KZT'),
+            UZS: convertPrice(500, 'UZS'),
         },
         description: '4 генерации'
     },
@@ -115,8 +125,8 @@ const CREDIT_PACKAGES: PaymentPackage[] = [
         credits: 8,
         prices: {
             RUB: 700,
-            KZT: convertPrice(700, 'KZT'),    // 3500 тенге
-            UZS: convertPrice(700, 'UZS'),    // 98000 сумов
+            KZT: convertPrice(700, 'KZT'),
+            UZS: convertPrice(700, 'UZS'),
         },
         description: '8 генераций'
     },
@@ -125,8 +135,8 @@ const CREDIT_PACKAGES: PaymentPackage[] = [
         credits: 16,
         prices: {
             RUB: 1120,
-            KZT: convertPrice(1120, 'KZT'),   // 5600 тенге
-            UZS: convertPrice(1120, 'UZS'),   // 156800 сумов
+            KZT: convertPrice(1120, 'KZT'),
+            UZS: convertPrice(1120, 'UZS'),
         },
         description: '16 генераций'
     },
@@ -135,8 +145,8 @@ const CREDIT_PACKAGES: PaymentPackage[] = [
         credits: 50,
         prices: {
             RUB: 2500,
-            KZT: convertPrice(2500, 'KZT'),   // 12500 тенге
-            UZS: convertPrice(2500, 'UZS'),   // 350000 сумов
+            KZT: convertPrice(2500, 'KZT'),
+            UZS: convertPrice(2500, 'UZS'),
         },
         description: '50 генераций'
     }
@@ -146,7 +156,6 @@ const CREDIT_PACKAGES: PaymentPackage[] = [
 interface ReferralPaymentHandler {
     processReferralPayment: (userId: number, amount: number) => Promise<void>;
 }
-
 export class RukassaPayment {
     private pool: Pool;
     private bot: Telegraf;
@@ -254,25 +263,25 @@ export class RukassaPayment {
         if (!package_) {
             throw new Error('Неверный ID пакета');
         }
-    
+
         const curr = SUPPORTED_CURRENCIES.find(c => c.code === currency);
         if (!curr) {
             throw new Error('Неподдерживаемая валюта');
         }
-    
+
         await this.cleanupStalePayment(userId);
-    
+
         const merchantOrderId = `${userId}_${Date.now()}`;
         
         const client = await this.pool.connect();
         try {
             await client.query('BEGIN');
-    
+
             await client.query(
                 'INSERT INTO payments (user_id, merchant_order_id, amount, credits, status, currency) VALUES ($1, $2, $3, $4, $5, $6)',
                 [userId, merchantOrderId, package_.prices[currency], package_.credits, 'pending', currency]
             );
-    
+
             // Создаем объект данных для отправки
             const paymentData = {
                 shop_id: SHOP_ID,
@@ -295,22 +304,22 @@ export class RukassaPayment {
                     description: `${package_.description} для пользователя ${userId}`
                 })
             };
-    
+
             console.log('Отправка запроса на создание платежа:', {
                 merchantOrderId,
                 userId,
                 amount: package_.prices[currency],
                 currency,
                 webhook_url: `${WEBHOOK_URL}/rukassa/webhook`,
-                paymentData // Добавим полные данные для отладки
+                paymentData
             });
-    
+
             // Создаем FormData для отправки
             const formData = new URLSearchParams();
             Object.entries(paymentData).forEach(([key, value]) => {
                 formData.append(key, value);
             });
-    
+
             const response = await axios.post<RukassaCreatePaymentResponse>(
                 RUKASSA_API_URL,
                 formData,
@@ -322,21 +331,21 @@ export class RukassaPayment {
                     timeout: 10000
                 }
             );
-    
+
             console.log('Ответ от RuKassa:', response.data);
-    
+
             if (response.data.error) {
                 throw new Error(response.data.message || response.data.error);
             }
-    
+
             const paymentUrl = response.data.url || response.data.link;
             if (!paymentUrl) {
                 throw new Error('Не удалось получить ссылку на оплату');
             }
-    
+
             await client.query('COMMIT');
             return paymentUrl;
-    
+
         } catch (error) {
             await client.query('ROLLBACK');
             if (axios.isAxiosError(error)) {
@@ -348,7 +357,6 @@ export class RukassaPayment {
             client.release();
         }
     }
-
     async checkPaymentStatus(orderId: string): Promise<string> {
         try {
             const formData = new URLSearchParams();
@@ -374,51 +382,62 @@ export class RukassaPayment {
         }
     }
 
-    async handleWebhook(data: RukassaWebhookBody): Promise<void> {
-        console.log('Получены данные webhook:', data);
-
-        if (!this.validateSignature(data)) {
-            throw new Error('Invalid webhook signature');
-        }
+    async handleWebhook(webhookBody: RukassaWebhookBody | RukassaNewWebhookBody): Promise<void> {
+        console.log('Получены данные webhook:', webhookBody);
 
         const client = await this.pool.connect();
         try {
             await client.query('BEGIN');
+
+            // Определяем merchant_order_id в зависимости от формата вебхука
+            const merchant_order_id = 'merchant_order_id' in webhookBody ? 
+                webhookBody.merchant_order_id : 
+                webhookBody.order_id;
 
             const paymentResult = await client.query(
                 `SELECT p.user_id, p.credits, p.currency, p.amount, p.status as current_status, u.credits as user_current_credits
                  FROM payments p
                  JOIN users u ON u.user_id = p.user_id
                  WHERE p.merchant_order_id = $1`,
-                [data.merchant_order_id]
+                [merchant_order_id]
             );
 
             if (paymentResult.rows.length === 0) {
-                throw new Error('Платёж не найден');
+                throw new Error(`Платёж ${merchant_order_id} не найден`);
             }
 
             const { user_id, credits, currency, amount, current_status, user_current_credits } = paymentResult.rows[0];
 
             if (current_status === 'paid') {
-                console.log(`Платеж ${data.merchant_order_id} уже был обработан ранее`);
+                console.log(`Платеж ${merchant_order_id} уже был обработан ранее`);
                 await client.query('COMMIT');
                 return;
             }
 
+            // Определяем статус платежа
+            const payment_status = 'status' in webhookBody ? 
+                (webhookBody.status === 'PAID' ? 'paid' : 'failed') :
+                webhookBody.payment_status;
+
+            console.log(`Обработка платежа ${merchant_order_id}, статус: ${payment_status}`);
+
+            // Обновляем статус платежа
             await client.query(
                 'UPDATE payments SET status = $1, order_id = $2, updated_at = CURRENT_TIMESTAMP WHERE merchant_order_id = $3',
-                [data.payment_status, data.order_id, data.merchant_order_id]
+                [payment_status, 'id' in webhookBody ? webhookBody.id : webhookBody.order_id, merchant_order_id]
             );
 
-            if (data.payment_status === 'paid') {
+            if (payment_status === 'paid') {
+                console.log(`Начисление ${credits} кредитов пользователю ${user_id}. Текущий баланс: ${user_current_credits}`);
+                
+                // Начисляем кредиты
                 await client.query(
                     'UPDATE users SET credits = credits + $1 WHERE user_id = $2',
                     [credits, user_id]
                 );
 
-                console.log(`Начислено ${credits} кредитов пользователю ${user_id}. Предыдущий баланс: ${user_current_credits}`);
-
-                const amountInRub = parseFloat(data.amount);
+                // Обрабатываем реферальную программу
+                const amountInRub = parseFloat('amount' in webhookBody ? webhookBody.amount : amount.toString());
                 if (!isNaN(amountInRub) && this.referralHandler) {
                     try {
                         await this.referralHandler.processReferralPayment(user_id, amountInRub);
@@ -427,6 +446,7 @@ export class RukassaPayment {
                     }
                 }
 
+                // Отправляем уведомление пользователю
                 const curr = SUPPORTED_CURRENCIES.find(c => c.code === currency);
                 await this.bot.telegram.sendMessage(
                     user_id,
@@ -442,7 +462,7 @@ export class RukassaPayment {
                         }
                     }
                 );
-            } else if (data.payment_status === 'failed') {
+            } else if (payment_status === 'failed') {
                 await this.bot.telegram.sendMessage(
                     user_id,
                     '❌ Оплата не была завершена. Попробуйте снова или выберите другой способ оплаты.',
@@ -578,31 +598,11 @@ export function setupRukassaWebhook(app: express.Express, rukassaPayment: Rukass
             });
             console.log('Headers:', req.headers);
             console.log('Body:', JSON.stringify(req.body, null, 2));
-            
-            const requiredFields = ['shop_id', 'amount', 'order_id', 'payment_status', 'merchant_order_id', 'sign'];
-            const missingFields = requiredFields.filter(field => !req.body[field]);
-            
-            if (missingFields.length > 0) {
-                console.error('Missing required fields:', missingFields);
-                return res.status(400).json({ 
-                    status: 'error',
-                    message: `Missing required fields: ${missingFields.join(', ')}`
-                });
-            }
-            
+
             await rukassaPayment.handleWebhook(req.body);
-            
             res.json({ status: 'success' });
         } catch (error) {
             console.error('Ошибка обработки webhook от Rukassa:', error);
-            
-            if (error instanceof Error && error.message === 'Invalid webhook signature') {
-                return res.status(403).json({ 
-                    status: 'error',
-                    message: 'Invalid signature'
-                });
-            }
-            
             res.status(500).json({ 
                 status: 'error',
                 message: error instanceof Error ? error.message : 'Unknown error'
@@ -612,7 +612,6 @@ export function setupRukassaWebhook(app: express.Express, rukassaPayment: Rukass
 
     setupPaymentPages(app);
 }
-
 function setupPaymentPages(app: express.Express): void {
     app.get('/payment/success', (req, res) => {
         res.send(`
@@ -787,6 +786,7 @@ function setupPaymentPages(app: express.Express): void {
         `);
     });
 
+    // Добавляем эндпоинт для проверки здоровья сервиса
     app.get('/payment/health', (req, res) => {
         res.status(200).json({
             status: 'ok',
@@ -794,10 +794,28 @@ function setupPaymentPages(app: express.Express): void {
             webhook_url: `${WEBHOOK_URL}/rukassa/webhook`
         });
     });
+
+    // Добавляем тестовый эндпоинт для проверки статуса платежа
+    app.get('/payment/status/:orderId', async (req, res) => {
+        try {
+            const rukassaPayment = new RukassaPayment(pool, bot);
+            const status = await rukassaPayment.checkPaymentStatus(req.params.orderId);
+            res.json({ 
+                order_id: req.params.orderId,
+                status,
+                timestamp: new Date().toISOString()
+            });
+        } catch (error) {
+            res.status(500).json({ 
+                error: 'Failed to check payment status',
+                details: error instanceof Error ? error.message : 'Unknown error'
+            });
+        }
+    });
 }
 
 // Функция для периодической проверки зависших платежей
-async function cleanupStaleTasks(pool: Pool, bot: Telegraf): Promise<void> {
+export async function cleanupStaleTasks(pool: Pool, bot: Telegraf): Promise<void> {
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
@@ -812,9 +830,12 @@ async function cleanupStaleTasks(pool: Pool, bot: Telegraf): Promise<void> {
         const rukassaPayment = new RukassaPayment(pool, bot);
 
         for (const payment of stalePayments.rows) {
+            console.log(`Проверка зависшего платежа: ${payment.merchant_order_id}`);
+            
             const status = await rukassaPayment.checkPaymentStatus(payment.merchant_order_id);
             
-            if (status === 'paid') {
+            if (status === 'PAID' || status === 'paid') {
+                console.log(`Обнаружен оплаченный платеж: ${payment.merchant_order_id}`);
                 await rukassaPayment.handleWebhook({
                     shop_id: SHOP_ID,
                     amount: '0',
@@ -826,6 +847,7 @@ async function cleanupStaleTasks(pool: Pool, bot: Telegraf): Promise<void> {
                     sign: ''
                 });
             } else if (status === 'failed' || status === 'expired' || status === 'error') {
+                console.log(`Отмена зависшего платежа: ${payment.merchant_order_id}`);
                 await client.query(
                     'UPDATE payments SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE merchant_order_id = $2',
                     [status, payment.merchant_order_id]
