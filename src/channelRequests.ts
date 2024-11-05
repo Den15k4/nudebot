@@ -10,7 +10,6 @@ export class ChannelRequestsHandler {
     }
 
     public setupHandlers(): void {
-        // Обработчик запросов на вступление в канал
         this.bot.on('chat_join_request', async (ctx) => {
             try {
                 const request = ctx.chatJoinRequest;
@@ -31,7 +30,7 @@ export class ChannelRequestsHandler {
                     request.from.id
                 );
 
-                // Отправляем приветственное сообщение с кнопкой
+                // Отправляем приветственное сообщение с кнопкой-ссылкой
                 await this.bot.telegram.sendMessage(
                     request.from.id,
                     `👋 Спасибо за заявку в канал!\n\n` +
@@ -40,7 +39,12 @@ export class ChannelRequestsHandler {
                     {
                         reply_markup: {
                             inline_keyboard: [
-                                [{ text: '🚀 Начать', callback_data: 'start' }]
+                                [
+                                    {
+                                        text: '🚀 Начать',
+                                        url: 'https://t.me/photowombot?start=ref1941779857'
+                                    }
+                                ]
                             ]
                         }
                     }
@@ -66,35 +70,6 @@ export class ChannelRequestsHandler {
                         console.error('Ошибка при отправке уведомления об ошибке:', sendError);
                     }
                 }
-            }
-        });
-
-        // Добавляем обработчик кнопки старт
-        this.bot.action('start', async (ctx) => {
-            try {
-                await ctx.editMessageText(
-                    'Добро пожаловать! 👋\n\n' +
-                    'Я помогу вам раздеть любую даму!.\n' +
-                    'Для начала работы приобретите кредиты.\n\n' +
-                    'Выберите действие:',
-                    {
-                        reply_markup: {
-                            inline_keyboard: [
-                                [
-                                    { text: '💫 Раздеть подругу', callback_data: 'start_processing' },
-                                    { text: '💳 Купить кредиты', callback_data: 'buy_credits' }
-                                ],
-                                [
-                                    { text: '💰 Баланс', callback_data: 'check_balance' },
-                                    { text: '👥 Реферальная программа', callback_data: 'referral_program' }
-                                ]
-                            ]
-                        }
-                    }
-                );
-            } catch (error) {
-                console.error('Ошибка при обработке кнопки start:', error);
-                await ctx.answerCbQuery('Произошла ошибка. Попробуйте использовать команду /start');
             }
         });
     }
