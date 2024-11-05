@@ -254,56 +254,63 @@ export class RukassaPayment {
         if (!package_) {
             throw new Error('Неверный ID пакета');
         }
-
+    
         const curr = SUPPORTED_CURRENCIES.find(c => c.code === currency);
         if (!curr) {
             throw new Error('Неподдерживаемая валюта');
         }
-
+    
         await this.cleanupStalePayment(userId);
-
+    
         const merchantOrderId = `${userId}_${Date.now()}`;
         
         const client = await this.pool.connect();
         try {
             await client.query('BEGIN');
-
+    
             await client.query(
                 'INSERT INTO payments (user_id, merchant_order_id, amount, credits, status, currency) VALUES ($1, $2, $3, $4, $5, $6)',
                 [userId, merchantOrderId, package_.prices[currency], package_.credits, 'pending', currency]
             );
-
-            const formData = new URLSearchParams();
-            formData.append('shop_id', SHOP_ID);
-            formData.append('token', TOKEN);
-            formData.append('order_id', merchantOrderId);
-            formData.append('amount', package_.prices[currency].toString());
-            formData.append('method', curr.method);
-            formData.append('currency_in', currency);
-            formData.append('webhook_url', `${WEBHOOK_URL}/rukassa/webhook`);
-            formData.append('success_url', `${WEBHOOK_URL}/payment/success`);
-            formData.append('fail_url', `${WEBHOOK_URL}/payment/fail`);
-            formData.append('back_url', `${WEBHOOK_URL}/payment/back`);
-
-            const custom_fields = {
-                user_id: userId,
-                package_id: packageId,
-                credits: package_.credits,
-                original_amount: package_.prices[currency],
-                original_currency: currency,
-                description: `${package_.description} для пользователя ${userId}`
+    
+            // Создаем объект данных для отправки
+            const paymentData = {
+                shop_id: SHOP_ID,
+                token: TOKEN,
+                order_id: merchantOrderId,
+                amount: package_.prices[currency].toString(),
+                method: curr.method,
+                currency_in: currency,
+                webhook_url: `${WEBHOOK_URL}/rukassa/webhook`,
+                success_url: `${WEBHOOK_URL}/payment/success`,
+                fail_url: `${WEBHOOK_URL}/payment/fail`,
+                back_url: `${WEBHOOK_URL}/payment/back`,
+                user_code: userId.toString(), // Убедимся что user_code передается как строка
+                custom_fields: JSON.stringify({
+                    user_id: userId,
+                    package_id: packageId,
+                    credits: package_.credits,
+                    original_amount: package_.prices[currency],
+                    original_currency: currency,
+                    description: `${package_.description} для пользователя ${userId}`
+                })
             };
-
-            formData.append('custom_fields', JSON.stringify(custom_fields));
-
+    
             console.log('Отправка запроса на создание платежа:', {
                 merchantOrderId,
                 userId,
                 amount: package_.prices[currency],
                 currency,
-                webhook_url: `${WEBHOOK_URL}/rukassa/webhook`
+                webhook_url: `${WEBHOOK_URL}/rukassa/webhook`,
+                paymentData // Добавим полные данные для отладки
             });
-
+    
+            // Создаем FormData для отправки
+            const formData = new URLSearchParams();
+            Object.entries(paymentData).forEach(([key, value]) => {
+                formData.append(key, value);
+            });
+    
             const response = await axios.post<RukassaCreatePaymentResponse>(
                 RUKASSA_API_URL,
                 formData,
@@ -315,24 +322,25 @@ export class RukassaPayment {
                     timeout: 10000
                 }
             );
-
+    
             console.log('Ответ от RuKassa:', response.data);
-
+    
             if (response.data.error) {
                 throw new Error(response.data.message || response.data.error);
             }
-
+    
             const paymentUrl = response.data.url || response.data.link;
             if (!paymentUrl) {
                 throw new Error('Не удалось получить ссылку на оплату');
             }
-
+    
             await client.query('COMMIT');
             return paymentUrl;
-
+    
         } catch (error) {
             await client.query('ROLLBACK');
             if (axios.isAxiosError(error)) {
+                console.error('Ошибка axios:', error.response?.data);
                 throw new Error(`Ошибка оплаты: ${error.response?.data?.message || error.response?.data?.error || 'Сервис временно недоступен'}`);
             }
             throw error;
