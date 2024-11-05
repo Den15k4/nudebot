@@ -42,7 +42,7 @@ export class ChannelRequestsHandler {
                                 [
                                     {
                                         text: '🚀 Начать',
-                                        callback_data: 'start'
+                                        callback_data: '/start'
                                     }
                                 ]
                             ]
