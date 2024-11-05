@@ -41,7 +41,7 @@ export class ChannelRequestsHandler {
                                 [
                                     {
                                         text: '🚀 /start',
-                                        url: 'https://t.me/photowombot?start=ref1941779857'
+                                        url: 'https://t.me/photowombot'
                                     }
                                 ]
                             ]
