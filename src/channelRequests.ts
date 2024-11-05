@@ -10,7 +10,6 @@ export class ChannelRequestsHandler {
     }
 
     public setupHandlers(): void {
-        // Обработка входящих запросов на вступление в канал
         this.bot.on('chat_join_request', async (ctx) => {
             try {
                 const request = ctx.chatJoinRequest;
