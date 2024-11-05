@@ -382,16 +382,16 @@ export class RukassaPayment {
 
     async handleWebhook(webhookBody: RukassaWebhookBody | RukassaNewWebhookBody): Promise<void> {
         console.log('Получены данные webhook:', webhookBody);
-
+    
         const client = await this.pool.connect();
         try {
             await client.query('BEGIN');
-
+    
             // Определяем merchant_order_id в зависимости от формата вебхука
             const merchant_order_id = 'merchant_order_id' in webhookBody ? 
                 webhookBody.merchant_order_id : 
                 webhookBody.order_id;
-
+    
             const paymentResult = await client.query(
                 `SELECT p.user_id, p.credits, p.currency, p.amount, p.status as current_status, u.credits as user_current_credits
                  FROM payments p
@@ -399,91 +399,93 @@ export class RukassaPayment {
                  WHERE p.merchant_order_id = $1`,
                 [merchant_order_id]
             );
-
+    
             if (paymentResult.rows.length === 0) {
                 throw new Error(`Платёж ${merchant_order_id} не найден`);
             }
-
+    
             const { user_id, credits, currency, amount, current_status, user_current_credits } = paymentResult.rows[0];
-
+    
             if (current_status === 'paid') {
                 console.log(`Платеж ${merchant_order_id} уже был обработан ранее`);
                 await client.query('COMMIT');
                 return;
             }
-
-          // Определяем статус платежа
-          const payment_status = 'status' in webhookBody ? 
-          (webhookBody.status === 'PAID' ? 'paid' : 'failed') :
-          webhookBody.payment_status;
-
-      console.log(`Обработка платежа ${merchant_order_id}, статус: ${payment_status}`);
-
-      // Обновляем статус платежа
-      await client.query(
-          'UPDATE payments SET status = $1, order_id = $2, updated_at = CURRENT_TIMESTAMP WHERE merchant_order_id = $3',
-          [payment_status, 'id' in webhookBody ? webhookBody.id : webhookBody.order_id, merchant_order_id]
-      );
-
-      if (payment_status === 'paid') {
-          console.log(`Начисление ${credits} кредитов пользователю ${user_id}. Текущий баланс: ${user_current_credits}`);
-          
-          // Начисляем кредиты
-          await client.query(
-              'UPDATE users SET credits = credits + $1 WHERE user_id = $2',
-              [credits, user_id]
-          );
-
-          // Обрабатываем реферальную программу
-          const amountInRub = parseFloat('amount' in webhookBody ? webhookBody.amount : amount.toString());
-          if (!isNaN(amountInRub) && this.referralHandler) {
-              try {
-                  await this.referralHandler.processReferralPayment(user_id, amountInRub);
-              } catch (error) {
-                  console.error('Ошибка при обработке реферального платежа:', error);
-              }
-          }
-
-          // Отправляем уведомление пользователю
-          const curr = SUPPORTED_CURRENCIES.find(c => c.code === currency);
-          await this.bot.telegram.sendMessage(
-              user_id,
-              `✅ Оплата ${amount} ${curr?.symbol || currency} успешно получена!\n` +
-              `💫 На ваш счет зачислено ${credits} кредитов.\n` +
-              `💰 Ваш текущий баланс: ${user_current_credits + credits} кредитов`,
-              {
-                  reply_markup: {
-                      inline_keyboard: [
-                          [{ text: '💫 Начать обработку', callback_data: 'start_processing' }],
-                          [{ text: '↩️ В главное меню', callback_data: 'back_to_menu' }]
-                      ]
-                  }
-              }
-          );
-      } else if (payment_status === 'failed') {
-          await this.bot.telegram.sendMessage(
-              user_id,
-              '❌ Оплата не была завершена. Попробуйте снова или выберите другой способ оплаты.',
-              {
-                  reply_markup: {
-                      inline_keyboard: [
-                          [{ text: '💳 Попробовать снова', callback_data: 'buy_credits' }],
-                          [{ text: '↩️ В главное меню', callback_data: 'back_to_menu' }]
-                      ]
-                  }
-              }
-          );
-      }
-
-      await client.query('COMMIT');
-  } catch (error) {
-      await client.query('ROLLBACK');
-      console.error('Ошибка при обработке webhook:', error);
-      throw error;
-  } finally {
-      client.release();
-  }
-}
+    
+            // Определяем статус платежа
+            const payment_status = 'status' in webhookBody ? 
+                (webhookBody.status === 'PAID' ? 'paid' : 'failed') :
+                webhookBody.payment_status;
+    
+            console.log(`Обработка платежа ${merchant_order_id}, статус: ${payment_status}`);
+    
+            // Обновляем статус платежа
+            await client.query(
+                'UPDATE payments SET status = $1, order_id = $2, updated_at = CURRENT_TIMESTAMP WHERE merchant_order_id = $3',
+                [payment_status, 'id' in webhookBody ? webhookBody.id : webhookBody.order_id, merchant_order_id]
+            );
+    
+            if (payment_status === 'paid') {
+                console.log(`Начисление ${credits} кредитов пользователю ${user_id}. Текущий баланс: ${user_current_credits}`);
+                
+                // Начисляем кредиты
+                await client.query(
+                    'UPDATE users SET credits = credits + $1 WHERE user_id = $2',
+                    [credits, user_id]
+                );
+    
+                // Обрабатываем реферальную программу
+                const amountInRub = parseFloat('amount' in webhookBody ? webhookBody.amount : amount.toString());
+                if (!isNaN(amountInRub) && this.referralHandler) {
+                    try {
+                        await this.referralHandler.processReferralPayment(user_id, amountInRub);
+                    } catch (error) {
+                        console.error('Ошибка при обработке реферального платежа:', error);
+                    }
+                }
+    
+                // Отправляем уведомление пользователю с кнопками
+                const curr = SUPPORTED_CURRENCIES.find(c => c.code === currency);
+                const keyboard = {
+                    inline_keyboard: [
+                        [
+                            { text: '💫 Начать обработку', callback_data: 'start_processing' },
+                            { text: '↩️ В главное меню', callback_data: 'back_to_menu' }
+                        ]
+                    ]
+                };
+    
+                await this.bot.telegram.sendMessage(
+                    user_id,
+                    `✅ Оплата ${amount} ${curr?.symbol || currency} успешно получена!\n` +
+                    `💫 На ваш счет зачислено ${credits} кредитов.\n` +
+                    `💰 Ваш текущий баланс: ${user_current_credits + credits} кредитов`,
+                    { reply_markup: keyboard }
+                );
+            } else if (payment_status === 'failed') {
+                await this.bot.telegram.sendMessage(
+                    user_id,
+                    '❌ Оплата не была завершена. Попробуйте снова или выберите другой способ оплаты.',
+                    {
+                        reply_markup: {
+                            inline_keyboard: [
+                                [{ text: '💳 Попробовать снова', callback_data: 'buy_credits' }],
+                                [{ text: '↩️ В главное меню', callback_data: 'back_to_menu' }]
+                            ]
+                        }
+                    }
+                );
+            }
+    
+            await client.query('COMMIT');
+        } catch (error) {
+            await client.query('ROLLBACK');
+            console.error('Ошибка при обработке webhook:', error);
+            throw error;
+        } finally {
+            client.release();
+        }
+    }
 }
 
 export function setupPaymentCommands(bot: Telegraf, pool: Pool): void {
