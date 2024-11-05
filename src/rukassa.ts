@@ -97,43 +97,43 @@ const SUPPORTED_CURRENCIES: Currency[] = [
 const CREDIT_PACKAGES: PaymentPackage[] = [
     {
         id: 1,
-        credits: 3,
+        credits: 4,
         prices: {
-            RUB: 300,     // 300₽
-            KZT: 32500,   // ~300₽
-            UZS: 86000,   // ~650₽
+            RUB: 500,      // 500₽
+            KZT: 47500,    // ~500₽
+            UZS: 150000,   // ~500₽
         },
-        description: '3 генерации'
+        description: '4 генерации'
     },
     {
         id: 2,
-        credits: 7,
+        credits: 8,
         prices: {
-            RUB: 600,      // 600₽
-            KZT: 58500,    // ~600₽
-            UZS: 154800,   // ~1200₽
+            RUB: 700,      // 700₽
+            KZT: 66500,    // ~700₽
+            UZS: 210000,   // ~700₽
         },
-        description: '7 генераций'
+        description: '8 генераций'
     },
     {
         id: 3,
-        credits: 15,
+        credits: 16,
         prices: {
-            RUB: 1200,     // 1200₽
-            KZT: 108000,   // ~1200₽
-            UZS: 286000,   // ~2150₽
+            RUB: 1120,     // 1120₽
+            KZT: 106400,   // ~1120₽
+            UZS: 336000,   // ~1120₽
         },
-        description: '15 генераций'
+        description: '16 генераций'
     },
     {
         id: 4,
-        credits: 30,
+        credits: 50,
         prices: {
-            RUB: 2000,     // 2000₽
-            KZT: 195000,   // ~2000₽
-            UZS: 516000,   // ~3900₽
+            RUB: 2500,     // 2500₽
+            KZT: 237500,   // ~2500₽
+            UZS: 750000,   // ~2500₽
         },
-        description: '30 генераций'
+        description: '50 генераций'
     }
 ];
 
@@ -433,16 +433,22 @@ export function setupPaymentCommands(bot: Telegraf, pool: Pool): void {
         try {
             const keyboard = {
                 inline_keyboard: [
-                    [{ text: '💳 Visa/MC (RUB)', callback_data: 'currency_RUB' }],
-                    [{ text: '💳 Visa/MC (KZT)', callback_data: 'currency_KZT' }],
-                    [{ text: '💳 Visa/MC (UZS)', callback_data: 'currency_UZS' }],
+                    [{ text: '4 генерации (125₽/шт)', callback_data: 'buy_1_RUB' }],
+                    [{ text: '8 генераций (87.5₽/шт)', callback_data: 'buy_2_RUB' }],
+                    [{ text: '16 генераций (70₽/шт)', callback_data: 'buy_3_RUB' }],
+                    [{ text: '50 генераций (50₽/шт)', callback_data: 'buy_4_RUB' }],
                     [{ text: '↩️ Назад', callback_data: 'back_to_menu' }]
                 ]
             };
-
+    
             await ctx.answerCbQuery();
             await ctx.editMessageCaption(
-                '💳 Выберите способ оплаты:',
+                '💫 Выберите количество генераций:\n\n' +
+                'ℹ️ Чем больше пакет, тем выгоднее цена за генерацию!\n\n' +
+                '💳 После выбора пакета вы сможете выбрать удобный способ оплаты:' +
+                '\n• Банковская карта (RUB/USD)' +
+                '\n• Карты других стран' +
+                '\n• Криптовалюта',
                 { reply_markup: keyboard }
             );
         } catch (error) {
@@ -490,40 +496,41 @@ export function setupPaymentCommands(bot: Telegraf, pool: Pool): void {
             const packageId = parseInt(ctx.match[1]);
             const currency = ctx.match[2] as SupportedCurrency;
             const userId = ctx.from?.id;
-
+    
             if (!userId) {
                 await ctx.answerCbQuery('ID пользователя не найден');
                 return;
             }
-
+    
             await ctx.answerCbQuery();
-
+    
             const rukassaPayment = new RukassaPayment(pool, bot);
             const paymentUrl = await rukassaPayment.createPayment(userId, packageId, currency);
-
+    
             const package_ = CREDIT_PACKAGES.find(p => p.id === packageId);
-            const curr = SUPPORTED_CURRENCIES.find(c => c.code === currency);
-
-            if (!package_ || !curr) {
-                throw new Error('Некорректные данные пакета или валюты');
+            const pricePerCredit = package_ ? Math.round(package_.prices.RUB / package_.credits) : 0;
+    
+            if (!package_) {
+                throw new Error('Некорректные данные пакета');
             }
-
+    
             const paymentKeyboard = {
                 inline_keyboard: [
                     [{ text: '💳 Перейти к оплате', url: paymentUrl }],
-                    [{ text: '↩️ Назад к выбору пакета', callback_data: `currency_${currency}` }]
+                    [{ text: '↩️ Назад к выбору пакета', callback_data: 'buy_credits' }]
                 ]
             };
-
+    
             await ctx.editMessageMedia(
                 {
                     type: 'photo',
                     media: { source: './assets/payment_process.jpg' },
                     caption: '🔄 Создан платеж:\n\n' +
                             `📦 Пакет: ${package_.description}\n` +
-                            `💰 Сумма: ${package_.prices[currency]} ${curr.symbol}\n\n` +
+                            `💰 Стоимость: ${package_.prices.RUB}₽ (${pricePerCredit}₽/шт)\n\n` +
                             '✅ Нажмите кнопку ниже для перехода к оплате.\n' +
-                            '⚡️ После оплаты кредиты будут начислены автоматически!'
+                            '⚡️ После оплаты кредиты будут начислены автоматически!\n\n' +
+                            '💡 На странице оплаты вы сможете выбрать удобный способ оплаты'
                 },
                 { reply_markup: paymentKeyboard }
             );
@@ -539,7 +546,7 @@ export function setupPaymentCommands(bot: Telegraf, pool: Pool): void {
                     errorMessage = error.message;
                 }
             }
-
+    
             await ctx.reply(
                 errorMessage,
                 {
