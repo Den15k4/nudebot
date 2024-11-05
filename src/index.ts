@@ -7,6 +7,7 @@ import FormData from 'form-data';
 import express from 'express';
 import multer from 'multer';
 import { RukassaPayment, setupPaymentCommands, setupRukassaWebhook } from './rukassa';
+import ChannelRequestsHandler from './channelRequests';
 
 dotenv.config();
 
