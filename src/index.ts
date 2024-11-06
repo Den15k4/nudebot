@@ -450,10 +450,8 @@ bot.command('start', async (ctx) => {
             {
                 caption: 'Добро пожаловать! 👋\n\n' +
                         'Я помогу вам раздеть любую даму!.\n' +
-                        'Правила пользования📄\n\n' +
-                        '<b><a href="https://telegra.ph/Polzovatelskoe-Soglashenie-Photowombot-10-30">Правила пользования</a></b>\n\n' +
-                        'Примеры раздетых фоток 🍓🔞\n\n' +
-                        '<b><a href="https://telegra.ph/Vazhnaya-instrukciya-11-06">Примеры работ</a></b>\n\n' +
+                        '<b><a href="https://telegra.ph/Polzovatelskoe-Soglashenie-Photowombot-10-30">Правила пользования📄</a></b>\n\n' +
+                        '<b><a href="https://telegra.ph/Vazhnaya-instrukciya-11-06">Примеры раздетых фоток 🍓🔞</a></b>\n\n' +
                         'Для начала работы приобретите кредиты.\n\n' +
                         'Выберите действие:',
                 parse_mode: 'HTML',
